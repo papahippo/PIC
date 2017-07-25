@@ -27,9 +27,9 @@ w_temp1          RES     1
 ;   ********************* RESET VECTOR LOCATION  ********************
 ;----------------------------------------------------------------------
 RESET_VECTOR  CODE    0x000              ; processor reset vector
-		movlw  high  Start               ; load upper byte of 'start' label
-		movwf  PCLATH                    ; initialize PCLATH
-		goto   Start                     ; go to beginning of program
+    movlw  high  Start               ; load upper byte of 'start' label
+    movwf  PCLATH                    ; initialize PCLATH
+    goto   Start                     ; go to beginning of program
 
     
 ;----------------------------------------------------------------------
@@ -74,12 +74,12 @@ HandleTimer1:
 
     banksel PIR1
     bcf	    PIR1,TMR1IF              ; clear Timer1 H/W flag
-    bsf		T1CON,TMR1ON             ; turn on Timer1 module
+    bsf	    T1CON,TMR1ON             ; turn on Timer1 module
 
     movf   saveTOSL,w
     movwf  PCL
 
-Later:
+Timer1_Await:
      banksel TOSL
      movf	TOSL,w
      decf	STKPTR
@@ -88,21 +88,25 @@ Later:
 
 ;  ******************* INITIALIZE TIMER1 MODULE  *******************
 ;----------------------------------------------------------------------
-init_timer1:
-		banksel T1CON                  ; select SFR bank	
-		movlw   b'00110000'            ; 1:8 prescale, 100mS rollover
-		movwf	T1CON                  ; initialize Timer1
+Timer1_Init:
+    banksel T1CON                  ; select SFR bank	
+    movlw   b'00110000'            ; 1:8 prescale, 100mS rollover
+    movwf   T1CON                  ; initialize Timer1
 
-		movlw	0x58                   ;
-		movwf	TMR1L                  ; initialize Timer1 low
-		movlw	0x9E                   ;
-		movwf	TMR1H                  ; initialize Timer1 high
+    movlw   0x58                   ;
+    movwf   TMR1L                  ; initialize Timer1 low
+    movlw   0x9E                   ;
+    movwf   TMR1H                  ; initialize Timer1 high
 
-		bcf		PIR1,TMR1IF            ; ensure flag is reset
-		bsf		T1CON,TMR1ON           ; turn on Timer1 module
-		return                         ; return from subroutine
+    bcf	    PIR1,TMR1IF            ; ensure flag is reset
+    bsf	    T1CON,TMR1ON           ; turn on Timer1 module
+    banksel PIE1
+    bsf	    PIE1,TMR1IE              ; enable Timer1 interrupt
+    return                         ; return from subroutine
      
 LED_Init:
+    ; Of the followng four LEDS, only D6 and D7 are used in this example.
+    ; Note that D5 is not freely available when debugging with MPLAB.
     ; Bit:   ----------------A5 A1 A2 C5 
     ; LED:   ---------------|D4|D5|D6|D7|-
     ; -----------------------------------------
@@ -111,8 +115,8 @@ LED_Init:
     clrf    RC5PPS
 
     banksel ANSELA              
-    clrf    ANSELA		; digital I/O mode
-    clrf    ANSELC
+    bcf     ANSELA,2		; digital I/O mode
+    bcf     ANSELC,5
 
     banksel TRISA               
     bcf     TRISA,2             ;make IO Pin A2 an output = LED D6
@@ -127,9 +131,7 @@ Start:
     movwf   OSCCON              ; move contents of the working register into OSCCON
 
     call    LED_Init
-    call    init_timer1
-    banksel PIE1
-    bsf	    PIE1,TMR1IE              ; enable Timer1 interrupt
+    call    Timer1_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
@@ -137,20 +139,20 @@ Start:
     call    LED_Cycle
 MainLoop:
     nop
-    bra	    MainLoop
+    bra	    MainLoop 
 
-LED_Cycle:
-    bcf     LATA,2  
-    bcf	    LATC, 5	; 00xx
-    call    Later
-    bsf	    LATA, 2	; 01xx
-    call    Later
+LED_Cycle:		;D7654
+    call    Timer1_Await
     bcf     LATA,2
-    bsf	    LATC, 5	; 10xx
-    call    Later
+    bcf	    LATC,5	; 00xx
+    call    Timer1_Await
+    bsf	    LATA,2	; 01xx
+    call    Timer1_Await
+    bcf     LATA,2
+    bsf	    LATC,5	; 10xx
+    call    Timer1_Await
     bsf     LATA,2
-    bsf	    LATC, 5	; 11xx
-    call    Later
+    bsf	    LATC,5	; 11xx
     bra	    LED_Cycle
 
-     end
+    end
