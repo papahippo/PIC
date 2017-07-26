@@ -5,11 +5,9 @@
 
     errorlevel -302                     ;supress the 'not in bank0' warning
 
-    ; general purpose memory usage:
-    cblock 0x70                         ;shared memory location that is accessible from all banks
-    saveTOSH
-    saveTOSL
-     endc
+    extern Timer1_Init, Timer1_Handle
+    extern LED_Init, LED_Cycle,
+    extern UART_Init, UART_Get, UART_Put
 
 ;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
 INT_VAR        UDATA   0x20              ; create uninitialized data "udata" section
@@ -44,7 +42,7 @@ INT_VECTOR   CODE    0x004               ; interrupt vector location
     movwf   pclath_temp              ; save off current copy of PCLATH
     clrf    PCLATH	             ; reset PCLATH to page 0
 
-    call    HandleTimer1
+    call    Timer1_Handle
 		;; ..........................
 exit_isr 
     clrf    STATUS                   ; ensure file register bank set to 0
@@ -55,104 +53,24 @@ exit_isr
     swapf   w_temp,f                 ;
     swapf   w_temp,w                 ; restore pre-isr W register contents
     retfie                           ; return from interrupt
-
-HandleTimer1:
-    banksel PIE1                     ; select SFR bank
-    btfss   PIE1,TMR1IE              ; test if interrupt is enabled
-    return
-
-    banksel PIR1
-    btfss   PIR1,TMR1IF              ; test if Timer1 rollover occured
-    return
-    
-    banksel T1CON                    ; select SFR bank
-    bcf	    T1CON,TMR1ON             ; turn off Timer1 module
-    movlw   0x58                     ;
-    addwf   TMR1L,f                  ; reload Timer1 low
-    movlw   0x9E                     ;
-    movwf   TMR1H                    ; reload Timer1 high
-
-    banksel PIR1
-    bcf	    PIR1,TMR1IF              ; clear Timer1 H/W flag
-    bsf	    T1CON,TMR1ON             ; turn on Timer1 module
-
-    movf   saveTOSL,w
-    movwf  PCL
-
-Timer1_Await:
-     banksel TOSL
-     movf	TOSL,w
-     decf	STKPTR
-     movwf	saveTOSL
-     return
-
-;  ******************* INITIALIZE TIMER1 MODULE  *******************
-;----------------------------------------------------------------------
-Timer1_Init:
-    banksel T1CON                  ; select SFR bank	
-    movlw   b'00110000'            ; 1:8 prescale, 100mS rollover
-    movwf   T1CON                  ; initialize Timer1
-
-    movlw   0x58                   ;
-    movwf   TMR1L                  ; initialize Timer1 low
-    movlw   0x9E                   ;
-    movwf   TMR1H                  ; initialize Timer1 high
-
-    bcf	    PIR1,TMR1IF            ; ensure flag is reset
-    bsf	    T1CON,TMR1ON           ; turn on Timer1 module
-    banksel PIE1
-    bsf	    PIE1,TMR1IE              ; enable Timer1 interrupt
-    return                         ; return from subroutine
-     
-LED_Init:
-    ; Of the followng four LEDS, only D6 and D7 are used in this example.
-    ; Note that D5 is not freely available when debugging with MPLAB.
-    ; Bit:   ----------------A5 A1 A2 C5 
-    ; LED:   ---------------|D4|D5|D6|D7|-
-    ; -----------------------------------------
-    banksel RA2PPS
-    clrf    RA2PPS
-    clrf    RC5PPS
-
-    banksel ANSELA              
-    bcf     ANSELA,2		; digital I/O mode
-    bcf     ANSELC,5
-
-    banksel TRISA               
-    bcf     TRISA,2             ;make IO Pin A2 an output = LED D6
-    bcf     TRISC,5             ;make IO Pin C5 an output = LED D7
-
-    return
-
     
 Start:
     banksel OSCCON              ; bank1
     movlw   b'11111000'         ; set cpu clock speed of 500KHz ->correlates to (1/(500K/4)) for each instruction
     movwf   OSCCON              ; move contents of the working register into OSCCON
 
-    call    LED_Init
-    call    Timer1_Init
+     call    UART_Init
+;;    call    LED_Init
+;;    call    Timer1_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
 
-    call    LED_Cycle
+;    call    LED_Cycle
 MainLoop:
-    nop
+    ;movlw   0x55		    ; 'E' 
+    call    UART_Get
+    call    UART_Put
     bra	    MainLoop 
-
-LED_Cycle:		;D7654
-    call    Timer1_Await
-    bcf     LATA,2
-    bcf	    LATC,5	; 00xx
-    call    Timer1_Await
-    bsf	    LATA,2	; 01xx
-    call    Timer1_Await
-    bcf     LATA,2
-    bsf	    LATC,5	; 10xx
-    call    Timer1_Await
-    bsf     LATA,2
-    bsf	    LATC,5	; 11xx
-    bra	    LED_Cycle
 
     end
