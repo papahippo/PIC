@@ -5,9 +5,10 @@
 
     errorlevel -302                     ;supress the 'not in bank0' warning
 
-    extern Timer1_Init, Timer1_Handle
+    extern Timer1_Init, Timer1_IRQ
     extern LED_Init, LED_Cycle,
     extern UART_Init, UART_Get, UART_Put
+    extern I2c_Init, I2c_Test, I2c_IRQ
 
 ;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
 INT_VAR        UDATA   0x20              ; create uninitialized data "udata" section
@@ -42,7 +43,8 @@ INT_VECTOR   CODE    0x004               ; interrupt vector location
     movwf   pclath_temp              ; save off current copy of PCLATH
     clrf    PCLATH	             ; reset PCLATH to page 0
 
-    call    Timer1_Handle
+    call    I2c_IRQ
+    call    Timer1_IRQ
 		;; ..........................
 exit_isr 
     clrf    STATUS                   ; ensure file register bank set to 0
@@ -59,18 +61,21 @@ Start:
     movlw   b'11111000'         ; set cpu clock speed of 500KHz ->correlates to (1/(500K/4)) for each instruction
     movwf   OSCCON              ; move contents of the working register into OSCCON
 
-     call    UART_Init
-;;    call    LED_Init
-;;    call    Timer1_Init
+    ;call    LED_Init
+    ;call    Timer1_Init
+    call    UART_Init
+    call    I2c_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
 
-;    call    LED_Cycle
+    ;call    LED_Cycle
+    
+    call I2c_Test
 MainLoop:
     ;movlw   0x55		    ; 'E' 
-    call    UART_Get
-    call    UART_Put
+    ;call    UART_Get
+    ;call    UART_Put
     bra	    MainLoop 
 
     end
