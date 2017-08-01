@@ -101,6 +101,7 @@ I2c_Xfer:
     andlw   0x1F		; mask out non-status bits
     btfss   STATUS,Z
     goto    $-3
+    bcf	    SSP1CON2,ACKDT	; set ACK ton normal state
     bsf     SSP1CON2,SEN	; initiate I2C bus start condition
     call    OnNext_I2c_IRQ
 
@@ -119,12 +120,22 @@ I2c_Xfer:
 ; we can test the code on a simple PFC8574A before implementing tricky stuff!
     movf    i2c_buf,w
     movwf   SSP1BUF		; write the data byte
-    call    OnNext_I2c_IRQ	; proceed when teh data byte has been written
+    decf    i2c_write_count,f
+    call    OnNext_I2c_IRQ	; proceed when the data byte has been written
 ; in this stubby code, we now just write a stop condition
     bra	    stop_cond
 
 straight_read:
-    ; not yet implemented!
+    bsf	    SSP1CON2,RCEN	; enable receive
+    call    OnNext_I2c_IRQ	; must wait for slave to pulse out data byte
+    movf    SSP1BUF,w
+    movwf   i2c_buf
+    decf    i2c_read_count,f	; pre-decrement to determine to ACK/NACK
+    btfsc   STATUS,Z
+    bsf	    SSP1CON2,ACKDT	; must NACK to make slave get off the bus!
+    bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
+    call    OnNext_I2c_IRQ	; proceed when ACK or NACK bit has been sent
+				; follow through to generate stop condition
 early_stop_cond:
 stop_cond:
     bsf	    SSP1CON2,PEN	; generate stop condition
@@ -139,16 +150,24 @@ I2c_Ignore_IRQ:
 I2c_Test:
     banksel SSP1CON2		; select SFR bank
     clrf    i2c_buf
-I2c_Test_loop:
+I2c_write_loop:
+    decf    i2c_buf,f
     movlw   0x70	    ; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave	    ; this is an 8-bit address!
     movlw   1
     movwf   i2c_write_count
     clrf    i2c_read_count    
     call    I2c_Xfer
-    btfss   i2c_status,0	; transfer still lin progress?
+    btfss   i2c_status,0    ; transfer still in progress?
     goto    $-1
-    incf    i2c_buf,f
-    goto    I2c_Test_loop
-
+;;    goto    I2c_write_loop
+I2c_read_loop:
+    incf    i2c_read_count  ; write_count will have gone to zero.
+    call    I2c_Xfer	    
+    btfss   i2c_status,0    ; transfer still in progress?
+    goto    $-1
+    btfsc   i2c_buf,7	    ; look for IO pin 7 being pulled down
+    goto    I2c_read_loop
+    nop		    ; set breakpoint here for test
+    goto    I2c_read_loop
     END
