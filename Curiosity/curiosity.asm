@@ -15,7 +15,7 @@ INT_VAR        UDATA   0x20              ; create uninitialized data "udata" sec
 w_temp           RES     1               ;
 status_temp      RES     1               ;
 pclath_temp      RES     1
-irq_count        RES     1
+bsr_temp         RES     1
 
 INT_VAR1       UDATA   0xA0              ; reserve location 0xA0
 w_temp1          RES     1
@@ -35,25 +35,14 @@ RESET_VECTOR  CODE    0x000              ; processor reset vector
 ;  ******************* INTERRUPT VECTOR LOCATION  *******************
 ;----------------------------------------------------------------------
 INT_VECTOR   CODE    0x004               ; interrupt vector location
-    movwf   w_temp                   ; save off current W register contents
-    movf    STATUS,w                 ; move status register into W register
-    clrf    STATUS                   ; ensure file register bank set to 0
-    movwf   status_temp              ; save off contents of STATUS register
-    movf    PCLATH,w
-    movwf   pclath_temp              ; save off current copy of PCLATH
-    clrf    PCLATH	             ; reset PCLATH to page 0
-
+    movlw   high I2c_IRQ
+    movwf   PCLATH	             ; reset PCLATH to page 0
     call    I2c_IRQ
-    ;call    Timer1_IRQ
+    movlw   high Timer1_IRQ
+    movwf   PCLATH	             ; reset PCLATH to page 0
+    call    Timer1_IRQ
 		;; ..........................
 exit_isr 
-    clrf    STATUS                   ; ensure file register bank set to 0
-    movf    pclath_temp,w
-    movwf   PCLATH                   ; restore PCLATH
-    movf    status_temp,w            ; retrieve copy of STATUS register
-    movwf   STATUS                   ; restore pre-isr STATUS register contents
-    swapf   w_temp,f                 ;
-    swapf   w_temp,w                 ; restore pre-isr W register contents
     retfie                           ; return from interrupt
     
 Start:
@@ -61,15 +50,15 @@ Start:
     movlw   b'11111000'         ; set cpu clock speed of 500KHz ->correlates to (1/(500K/4)) for each instruction
     movwf   OSCCON              ; move contents of the working register into OSCCON
 
-    ;call    LED_Init
-    ;call    Timer1_Init
-    ;call    UART_Init
+    call    UART_Init
+    call    Timer1_Init
+    call    LED_Init
     call    I2c_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
 
-    ;call    LED_Cycle
+    call    LED_Cycle
     
     call I2c_Test
 MainLoop:

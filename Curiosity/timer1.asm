@@ -46,7 +46,6 @@ Timer1_IRQ:
 
     banksel PIR1
     bcf	    PIR1,TMR1IF              ; clear Timer1 H/W flag
-    bsf	    T1CON,TMR1ON             ; turn on Timer1 module
 
     movf   Timer1_TOSH,w
     movwf  PCLATH
@@ -60,6 +59,8 @@ OnNext_Timer1_IRQ:
      movf	TOSH,w
      movwf	Timer1_TOSH
      decf	STKPTR
+     banksel	T1CON
+     bsf    T1CON,TMR1ON             ; turn on Timer1 module
      return
 
     END
