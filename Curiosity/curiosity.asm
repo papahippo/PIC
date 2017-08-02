@@ -60,11 +60,11 @@ Start:
 
     call    LED_Cycle
     
-    call I2c_Test
+    ;call I2c_Test
 MainLoop:
-    ;movlw   0x55		    ; 'E' 
-    ;call    UART_Get
-    ;call    UART_Put
+    movlw   0x55		    ; 'E' 
+    call    UART_Get
+    call    UART_Put
     bra	    MainLoop 
 
     end
