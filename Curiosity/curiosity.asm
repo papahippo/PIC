@@ -44,7 +44,7 @@ INT_VECTOR   CODE    0x004               ; interrupt vector location
     clrf    PCLATH	             ; reset PCLATH to page 0
 
     call    I2c_IRQ
-    call    Timer1_IRQ
+    ;call    Timer1_IRQ
 		;; ..........................
 exit_isr 
     clrf    STATUS                   ; ensure file register bank set to 0
@@ -63,7 +63,7 @@ Start:
 
     ;call    LED_Init
     ;call    Timer1_Init
-    call    UART_Init
+    ;call    UART_Init
     call    I2c_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
