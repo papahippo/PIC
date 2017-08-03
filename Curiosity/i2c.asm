@@ -12,17 +12,16 @@
  
 I2c_VAR        UDATA	0x220   ; accessible from SSP register bank!
 i2c_callback	RES	2
-i2c_status	RES	1
+i2c_flags	RES	1
 i2c_slave       RES	1               ;
-i2c_write_count RES	1
-i2c_read_count	RES	1
+i2c_count	RES	1
 i2c_reserved	RES	0x0a
 i2c_buf		RES	32
 
 I2c CODE			; let linker place this
 
     global I2c_Init, I2c_Test, I2c_IRQ
-
+    extern UART_Put
 I2c_Init:
     banksel SSP1ADD		; select SFR bank
     movlw   ClockValue		; read selected baud rate 
@@ -90,11 +89,6 @@ I2c_IRQ:
 
 I2c_Xfer:    
     banksel SSP1CON2		; select SFR bank
-    clrf    i2c_status		; = operation in progress 
-    bcf	    i2c_slave,0		; correct if we're writing first...  but maybe ...
-    movf    i2c_write_count,w	; ... there's no data writing to do
-    btfsc   STATUS,Z
-    bsf	    i2c_slave,0		; correct bit 0 for reading straightaway
     btfsc   SSP1STAT,R_NOT_W	; transmit in progress?
     goto    $-1
     movf    SSP1CON2,w
@@ -116,8 +110,8 @@ I2c_Xfer:
     btfsc   i2c_slave,0		; what must we do (first)? read or write?
     bra	    straight_read	; immediate read (e.g. no sub-address to write).
 write_next:
-    decf    i2c_write_count,f
-    btfsc   i2c_write_count,7
+    decf    i2c_count,f
+    btfsc   i2c_count,7
     bra	    writing_done
     movf    i2c_buf,w
     movwf   SSP1BUF		; write the data byte
@@ -129,7 +123,7 @@ straight_read:
     call    OnNext_I2c_IRQ	; must wait for slave to pulse out data byte
     movf    SSP1BUF,w
     movwf   i2c_buf
-    decf    i2c_read_count,f	; decrement to determine to ACK/NACK
+    decf    i2c_count,f		; decrement to determine to ACK/NACK
     btfsc   STATUS,Z
     bra	    DoneLastRead
     bcf	    SSP1CON2,ACKDT	; must ACK to encourage slave to keep sending.
@@ -143,39 +137,44 @@ DoneLastRead:
     call    OnNext_I2c_IRQ	; proceed when NACK bit has been sent
 				; follow through to generate stop condition
 writing_done:
-    clrf    i2c_write_count	; we let this go negative earlier for easy test.
+    clrf    i2c_count	    	; we let this go negative earlier for easy test.
 early_stop_cond:
 stop_cond:
     bsf	    SSP1CON2,PEN	; generate stop condition
     call    OnNext_I2c_IRQ	; proceed when stop condition has been given.
 
-    incf    i2c_status,f	; 1 = operation completed
-I2c_Ignore_IRQ:
-    call    OnNext_I2c_IRQ	; don't expect more I2c interrupt but don't
-    bra	    I2c_Ignore_IRQ
+    bsf    i2c_flags,7		; = operation completed
+    call    OnNext_I2c_IRQ
+    return
 
+I2c_sync_Xfer:
+    clrf    i2c_flags
+    call    I2c_Xfer
+I2c_wait:
+    banksel SSP1CON2		; select SFR bank
+    btfss   i2c_flags,7		; transfer still in progress?
+    goto    $-1
+    return
     
 I2c_Test:
     banksel SSP1CON2		; select SFR bank
     clrf    i2c_buf
 I2c_write_loop:
     decf    i2c_buf,f
-    movlw   0x70	    ; prepare to access i2c device PCF8574A 0111 000 
-    movwf   i2c_slave	    ; this is an 8-bit address!
+    movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
+    movwf   i2c_slave		; this is an 8-bit address!
     movlw   1
-    movwf   i2c_write_count
-    clrf    i2c_read_count    
-    call    I2c_Xfer
-    btfss   i2c_status,0    ; transfer still in progress?
-    goto    $-1
-;;    goto    I2c_write_loop
+    call    I2c_sync_Xfer
+    ;goto    I2c_write_loop
+    incf    i2c_slave,f		; now set the R bit!
 I2c_read_loop:
-    incf    i2c_read_count,f; write_count will have gone to zero.
-    call    I2c_Xfer	    
-    btfss   i2c_status,0    ; transfer still in progress?
-    goto    $-1
-    btfsc   i2c_buf,7	    ; look for IO pin 7 being pulled down
-    goto    I2c_read_loop
-    nop		    ; set breakpoint here for test
+    banksel SSP1CON2		; select SFR bank    
+    incf    i2c_count,f		; count will have gone to zero.
+    call    I2c_sync_Xfer
+;    btfsc   i2c_buf,7		; look for IO pin 7 being pulled down
+;    goto    I2c_read_loop
+;    nop				; set breakpoint here for test!
+    movf    i2c_buf,w
+    call    UART_Put
     goto    I2c_read_loop
     END

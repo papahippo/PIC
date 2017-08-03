@@ -3,7 +3,7 @@
 
 UART CODE                      ; let linker place this
 
-    global UART_Init, UART_Get, UART_Put
+    global UART_Init, UART_Get, UART_Put, UART_Test
 UART_Init:
     banksel TXSTA
     bsf	    BAUD1CON,BRG16
@@ -51,5 +51,13 @@ UART_Put:
     bra	    UART_Put
     movwf   TXREG	    ; output the characer
     return	
-     
+
+UART_Test:
+    movlw   0x20
+UART_Test_next:
+    call    UART_Put
+    incf    WREG
+    btfss   WREG,7
+    bra	    UART_Test_next
+    bra	    UART_Test
     END

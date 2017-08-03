@@ -7,7 +7,7 @@
 
     extern Timer1_Init, Timer1_IRQ
     extern LED_Init, LED_Cycle,
-    extern UART_Init, UART_Get, UART_Put
+    extern UART_Init, UART_Get, UART_Put, UART_Test
     extern I2c_Init, I2c_Test, I2c_IRQ
 
 ;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
@@ -59,12 +59,13 @@ Start:
     bsf	    INTCON,GIE               ; enable global interrupt
 
     call    LED_Cycle
-    
+    ;call    UART_Get
     ;call I2c_Test
+    call    UART_Test
 MainLoop:
-    movlw   0x55		    ; 'E' 
-    call    UART_Get
-    call    UART_Put
-    bra	    MainLoop 
+    ;movlw   0x55		    ; 'E' 
+    ;call    UART_Get
+    ;call    UART_Put
+    ;bra	    MainLoop 
 
     end
