@@ -51,14 +51,14 @@ Start:
     movwf   OSCCON              ; move contents of the working register into OSCCON
 
     call    UART_Init
-    call    Timer1_Init
-    call    LED_Init
-    call    I2c_Init
+    ;call    Timer1_Init
+    ;call    LED_Init
+    ;call    I2c_Init
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
 
-    call    LED_Cycle
+    ;call    LED_Cycle
     ;call    UART_Get
     ;call I2c_Test
     call    UART_Test

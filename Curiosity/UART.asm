@@ -53,11 +53,12 @@ UART_Put:
     return	
 
 UART_Test:
-    movlw   0x20
+    call    UART_Get
 UART_Test_next:
     call    UART_Put
-    incf    WREG
-    btfss   WREG,7
-    bra	    UART_Test_next
+;    incf    WREG
+;    btfss   WREG,7
+;    bra	    UART_Test_next
+;    movlw   0x30
     bra	    UART_Test
     END
