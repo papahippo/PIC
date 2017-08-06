@@ -53,7 +53,7 @@ Start:
     call    UART_Init
     ;call    Timer1_Init
     ;call    LED_Init
-    ;call    I2c_Init
+    ;call    I2c_Init_400KHz
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
