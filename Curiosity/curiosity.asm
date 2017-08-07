@@ -8,7 +8,7 @@
     extern Timer1_Init, Timer1_IRQ
     extern LED_Init, LED_Cycle,
     extern UART_Init, UART_Get, UART_Put, UART_Test
-    extern I2c_Init, I2c_Test, I2c_IRQ
+    extern I2c_Init, I2c_Init_400KHz, I2c_Test, I2c_IRQ
 
 ;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
 INT_VAR        UDATA   0x20              ; create uninitialized data "udata" section
@@ -38,9 +38,9 @@ INT_VECTOR   CODE    0x004               ; interrupt vector location
     movlw   high I2c_IRQ
     movwf   PCLATH	             ; reset PCLATH to page 0
     call    I2c_IRQ
-    movlw   high Timer1_IRQ
-    movwf   PCLATH	             ; reset PCLATH to page 0
-    call    Timer1_IRQ
+;    movlw   high Timer1_IRQ
+;    movwf   PCLATH	             ; reset PCLATH to page 0
+;    call    Timer1_IRQ
 		;; ..........................
 exit_isr 
     retfie                           ; return from interrupt
@@ -53,15 +53,15 @@ Start:
     call    UART_Init
     ;call    Timer1_Init
     ;call    LED_Init
-    ;call    I2c_Init_400KHz
+    call    I2c_Init_400KHz
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt
     bsf	    INTCON,GIE               ; enable global interrupt
 
     ;call    LED_Cycle
     ;call    UART_Get
-    ;call I2c_Test
-    call    UART_Test
+    call I2c_Test
+    ;call    UART_Test
 MainLoop:
     ;movlw   0x55		    ; 'E' 
     ;call    UART_Get
