@@ -21,9 +21,10 @@ i2c_buf		    RES	32	; temporary! buffer access code not yet written.
 
 I2c CODE			; let linker place this
 
-    global I2c_Init_400KHz, I2c_Init, I2c_Test, I2c_IRQ, I2c_Xfer, I2c_Use_Internal_Buffer
+    global  I2c_Init_400KHz, I2c_Init, I2c_IRQ, I2c_Xfer, I2c_Use_Internal_Buffer
+    global  I2c_Test, I2c_Probe
     
-    extern UART_Put
+    extern UART_Get, UART_Put, UART_Print
  
 I2c_Init_400KHz:
     movlw   ClockValue400KHz	; read selected bit rate 
@@ -223,10 +224,10 @@ resuming:
     bra	    this_slave_done		; NO:-> finish transfer,quit the i2c bus asap.
 				; YES:-> must check for special cases!
     movwf   i2c_active_slave	; what slave were we dealing with
-    subwf   i2c_slave,f		; same slave and same direction (R/W)?
+    subwf   i2c_slave,w		; same slave and same direction (R/W)?
     btfsc   STATUS,Z
     bra	    more_of_same	; YES:-> carry on.
-    andlw   1			; NO:-> Read after write to same slave address?
+    andlw   0xfe			; NO:-> Read after write to same slave address?
     btfss   STATUS,Z
     bra	    this_slave_done	; NO: => must stop 
 				; yes => need to give repeated start.
@@ -282,7 +283,31 @@ I2c_sync_Xfer_byte:
     movf    i2c_buf,w		; byte just read if reading
     return
 
+I2c_Probe:
+    banksel SSP1CON2		; select SFR bank    
+    clrf    i2c_slave
+    clrf    i2c_flags
+    clrf    i2c_flags
+I2c_Probe_next:
+    movlw   2
+    movwf   i2c_count
+    addwf   i2c_slave,f
+    btfsc   STATUS,Z
+    return
+    bcf	    i2c_flags,1
+    call    I2c_Use_Internal_Buffer
+    call    I2c_Xfer
+    movfw   i2c_slave
+    btfss   i2c_flags,1
+    call    UART_Print
+    banksel SSP1CON2		; select SFR bank    
+    goto    I2c_Probe_next
+
 I2c_Test:
+    call    UART_Get
+    call    UART_Print
+    goto    I2c_Probe
+
     banksel SSP1CON2		; select SFR bank
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave		; this is an 8-bit address!
@@ -299,24 +324,7 @@ I2c_read_loop:
     btfsc   WREG,7		; look for IO pin 7 being pulled down
     goto    I2c_read_loop    
     goto    I2c_read_loop	; set breakpoint here to detect low pin7.
+  
     END
 
-I2c_Probe:
-    banksel SSP1CON2		; select SFR bank    
-    clrf    i2c_slave
-    clrf    i2c_flags
-    clrf    i2c_flags
-I2c_Probe_next:
-    movlw   2
-    movwf   i2c_count
-    addwf   i2c_slave,f
-    btfsc   STATUS,Z
-    return
-    bcf	    i2c_flags,1
-    call    I2c_Use_Internal_Buffer
-    call    I2c_Xfer
-    movfw   i2c_slave
-    btfsc   i2c_flags,1
-    call    UART_Print
-    goto    I2c_Probe_next
-    
+I

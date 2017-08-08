@@ -3,13 +3,13 @@
 
 UART CODE                      ; let linker place this
 
-    global UART_Init, UART_Get, UART_Put, UART_Test
+    global UART_Init, UART_Get, UART_Put, UART_Print, UART_Test
 UART_Init:
     banksel TXSTA
     bsf	    BAUD1CON,BRG16
-    movlw   3		; these values give 9600 baud acc. to scope...
+    movlw   3			; these values give 9600 baud acc. to scope...
     movwf   SPBRGH
-    movlw   40		; ... which implies that FOSC = 31.1MHz!?
+    movlw   40			; ... which implies that FOSC = 31.1MHz!?
     movwf   SPBRGL
     bsf	    TXSTA,BRGH
     bsf	    TXSTA,CSRC

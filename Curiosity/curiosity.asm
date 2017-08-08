@@ -8,7 +8,7 @@
     extern Timer1_Init, Timer1_IRQ
     extern LED_Init, LED_Cycle,
     extern UART_Init, UART_Get, UART_Put, UART_Test
-    extern I2c_Init, I2c_Init_400KHz, I2c_Test, I2c_IRQ
+    extern I2c_Init, I2c_Init_400KHz, I2c_Test, I2c_IRQ, I2c_Probe
 
 ;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
 INT_VAR        UDATA   0x20              ; create uninitialized data "udata" section
@@ -59,12 +59,12 @@ Start:
     bsf	    INTCON,GIE               ; enable global interrupt
 
     ;call    LED_Cycle
-    call I2c_Test
+    call    I2c_Test
     ;call    UART_Test
 MainLoop:
     ;movlw   0x55		    ; 'E' 
     ;call    UART_Get
     ;call    UART_Put
-    ;bra	    MainLoop 
+    bra	    MainLoop 
 
     end
