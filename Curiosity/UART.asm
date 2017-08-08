@@ -42,6 +42,18 @@ UART_Get:
     movf    RCREG,w
     return	
      
+UART_Print: ; output byte value to UART as two printable hex digits.
+    movwf   0x7f
+    call    UART_Print_MSD
+UART_Print_MSD:
+    swapf   0x7f,f
+UART_Print_LSD:
+    movlw   0x0f
+    andwf   0x7f,w
+    addlw   0x36	    ; 0...f --> 0x36... 0x45  
+    btfss   STATUS,DC	    ; skip if was a-f
+    addlw   0xf9	    ; -=7 => 0...9 --> 0x36...0x3f -> 0x2f...0x39
+    addlw   0x01	    ; and follow thropug to tranmit ASCII digit
 UART_Put:
     ;banksel PIR1
     ;btfss   PIR1, TXIF        ; Bit Test File, Skip if Set
@@ -52,13 +64,9 @@ UART_Put:
     movwf   TXREG	    ; output the characer
     return	
 
+    
 UART_Test:
     call    UART_Get
-UART_Test_next:
-    call    UART_Put
-;    incf    WREG
-;    btfss   WREG,7
-;    bra	    UART_Test_next
-;    movlw   0x30
+    call    UART_Print
     bra	    UART_Test
     END

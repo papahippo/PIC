@@ -59,7 +59,6 @@ Start:
     bsf	    INTCON,GIE               ; enable global interrupt
 
     ;call    LED_Cycle
-    ;call    UART_Get
     call I2c_Test
     ;call    UART_Test
 MainLoop:

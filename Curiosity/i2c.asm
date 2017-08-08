@@ -21,7 +21,7 @@ i2c_buf		    RES	32	; temporary! buffer access code not yet written.
 
 I2c CODE			; let linker place this
 
-    global I2c_Init_400KHz, I2c_Init, I2c_Test, I2c_IRQ, I2c_Xfer
+    global I2c_Init_400KHz, I2c_Init, I2c_Test, I2c_IRQ, I2c_Xfer, I2c_Use_Internal_Buffer
     
     extern UART_Put
  
@@ -63,6 +63,14 @@ I2c_Init:
 ; The followng call is just a long-stop in-case an i2c interrupt happens
 ; before we expect it. In that case the following return is harmless.
     call    OnNext_I2c_IRQ
+    return
+
+I2c_Use_Internal_Buffer:
+    banksel SSP1CON2		; select SFR bank
+    movlw   high i2c_buf
+    movwf   FSR1H
+    movlw   low i2c_buf
+    movwf   FSR1L
     return
 
 OnNext_I2c_IRQ:
@@ -140,7 +148,7 @@ new_start:
     bsf     SSP1CON2,SEN	; initiate I2C bus start condition
 common_start:			; (common to regular and repeated start.)
     call    OnNext_I2c_IRQ
-
+    clrf    i2c_active_slave	; slave not yet known to be 'at home'
 ; The first interrupt after we cause the start condition gets to here:
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
@@ -151,11 +159,12 @@ common_start:			; (common to regular and repeated start.)
   endif
 ; We privately remember the slave address and R/W bit so that, following a
 ; a callback, we can correctly identify repeated start and other conditions.
-    movwf   i2c_active_slave	; save a copy
     call    OnNext_I2c_IRQ	; proceed when slave address has been written
 ;The first interrupt after we write the slave address gets to here:
     btfsc   SSP1CON2,ACKSTAT	; did our presumed slave acknowledge?
     bra	    IO_error		; no? waste no more time. get off i2c bus asap.
+    movf    i2c_slave,w		; this slave had responded to its address
+    movwf   i2c_active_slave	; save a copy of its address
     btfsc   i2c_slave,0		; what must we do (first)? read or write?
     bra	    straight_read	; immediate read (e.g. no sub-address to write).
 write_next:
@@ -225,8 +234,13 @@ resuming:
     bra	    common_start
 
 this_slave_done:
+  
     btfss   i2c_slave,0		; what were we doing? reading or writing?
     bra	    give_stop_cond	; writing: => can give stop condition now.
+    movf    i2c_active_slave,w	; had we actually read a byte yet?
+    btfsc   STATUS,Z		; YES:-> NACK the last received byte
+    bra	    give_stop_cond	; NO: > mustn't try and NACK byte we never got!
+    
 sendNACK:			; reading: => must NACK first.
     bsf	    SSP1CON2,ACKDT	; must NACK to make slave get off the bus!
     bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
@@ -236,7 +250,7 @@ give_stop_cond:
     call    OnNext_I2c_IRQ	; proceed when stop condition has been given.
     bcf     i2c_flags,0		; = operation completed
     btfsc   i2c_flags,1		; error detected (and not cancelled in callback)
-    bra	    this_slave_done	; YES:-> just do the callback.
+    bra	    do_callback		; YES:-> just do the callback.
     movf    i2c_count,w		; follow up I/O to be done?
     btfss   STATUS,Z
     bra	    new_start		; YES: > give start cond, address new slave etc.
@@ -261,10 +275,7 @@ I2c_wait:
 I2c_sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_buf		; byte to be written if writing
-    movlw   high i2c_buf
-    movwf   FSR1H
-    movlw   low i2c_buf
-    movwf   FSR1L
+    call    I2c_Use_Internal_Buffer
     movlw   1
     movwf   i2c_count
     call    I2c_sync_Xfer
@@ -278,14 +289,34 @@ I2c_Test:
     movlw   0xff
 I2c_write_loop:
     call    I2c_sync_Xfer_byte
-    addlw   0xff		; W -= 1
-    goto    I2c_write_loop
+;;    addlw   0xff		; W -= 1
+;;    goto    I2c_write_loop
     bsf    i2c_slave,0		; now set the R bit!
 I2c_read_loop:
     banksel SSP1CON2		; select SFR bank    
     incf    i2c_count,f		; count will have gone to zero.
     call    I2c_sync_Xfer
-    movf    i2c_buf,w
-    call    UART_Put
-    goto    I2c_read_loop
+    btfsc   WREG,7		; look for IO pin 7 being pulled down
+    goto    I2c_read_loop    
+    goto    I2c_read_loop	; set breakpoint here to detect low pin7.
     END
+
+I2c_Probe:
+    banksel SSP1CON2		; select SFR bank    
+    clrf    i2c_slave
+    clrf    i2c_flags
+    clrf    i2c_flags
+I2c_Probe_next:
+    movlw   2
+    movwf   i2c_count
+    addwf   i2c_slave,f
+    btfsc   STATUS,Z
+    return
+    bcf	    i2c_flags,1
+    call    I2c_Use_Internal_Buffer
+    call    I2c_Xfer
+    movfw   i2c_slave
+    btfsc   i2c_flags,1
+    call    UART_Print
+    goto    I2c_Probe_next
+    
