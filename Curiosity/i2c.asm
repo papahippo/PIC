@@ -235,7 +235,6 @@ resuming:
     bra	    common_start
 
 this_slave_done:
-  
     btfss   i2c_slave,0		; what were we doing? reading or writing?
     bra	    give_stop_cond	; writing: => can give stop condition now.
     movf    i2c_active_slave,w	; had we actually read a byte yet?
@@ -286,26 +285,30 @@ I2c_sync_Xfer_byte:
 I2c_Probe:
     banksel SSP1CON2		; select SFR bank    
     clrf    i2c_slave
+    incf    i2c_slave
     clrf    i2c_flags
     clrf    i2c_flags
 I2c_Probe_next:
-    movlw   2
+    movlw   1
     movwf   i2c_count
+    movlw   2
     addwf   i2c_slave,f
-    btfsc   STATUS,Z
-    return
-    bcf	    i2c_flags,1
+    btfsc   STATUS,C
+    bra	    I2c_Probe_next
+    ;;bcf	    i2c_flags,1
     call    I2c_Use_Internal_Buffer
     call    I2c_Xfer
-    movfw   i2c_slave
+    lsrf   i2c_slave,w
+    
     btfss   i2c_flags,1
     call    UART_Print
     banksel SSP1CON2		; select SFR bank    
+    bcf     i2c_flags,1		; = remove error condition
     goto    I2c_Probe_next
 
 I2c_Test:
-    call    UART_Get
-    call    UART_Print
+;    call    UART_Get
+;    call    UART_Print
     goto    I2c_Probe
 
     banksel SSP1CON2		; select SFR bank

@@ -28,6 +28,7 @@ LED_Init:
 LED_Cycle:
 	  ;state of LEDs D7654
     call    OnNext_Timer1_IRQ; ====
+    banksel LATA               
     bcf     LATA,2
     bcf	    LATC,5	; 00xx
     call    OnNext_Timer1_IRQ

@@ -35,12 +35,17 @@ RESET_VECTOR  CODE    0x000              ; processor reset vector
 ;  ******************* INTERRUPT VECTOR LOCATION  *******************
 ;----------------------------------------------------------------------
 INT_VECTOR   CODE    0x004               ; interrupt vector location
+    banksel LATA               
+    bsf     LATA,2
+
     movlw   high I2c_IRQ
     movwf   PCLATH	             ; reset PCLATH to page 0
     call    I2c_IRQ
 ;    movlw   high Timer1_IRQ
 ;    movwf   PCLATH	             ; reset PCLATH to page 0
 ;    call    Timer1_IRQ
+    banksel LATA               
+    bcf     LATA,2
 		;; ..........................
 exit_isr 
     retfie                           ; return from interrupt
@@ -52,7 +57,7 @@ Start:
 
     call    UART_Init
     ;call    Timer1_Init
-    ;call    LED_Init
+    call    LED_Init
     call    I2c_Init_400KHz
     banksel INTCON
     bsf	    INTCON,PEIE               ; enable ??? interrupt

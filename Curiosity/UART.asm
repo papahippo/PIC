@@ -44,6 +44,8 @@ UART_Get:
      
 UART_Print: ; output byte value to UART as two printable hex digits.
     movwf   0x7f
+    movlw   "x"
+    call    UART_Put
     call    UART_Print_MSD
 UART_Print_MSD:
     swapf   0x7f,f
