@@ -14,14 +14,14 @@ i2c_flags	    RES	1	; public parameter, also used internally
 i2c_slave	    RES	1       ; public parameter; n.b. 8-bit address + R/W
 i2c_count	    RES	1	; passed in W! buffer size to read/write
 i2c_callbackL	    RES	1	; public parameters = address of code following 
-i2c_callbackH	    RES	1	;      call to I2c_Xfer
+i2c_callbackH	    RES	1	;      call to I2c_Drive
 i2c_active_slave    RES 1	; private parameter to deteremine special cases
 i2c_reserved	    RES	d'10'
 i2c_buf		    RES	32	; temporary! buffer access code not yet written.
 
 I2c CODE			; let linker place this
 
-    global  I2c_Init_400KHz, I2c_Init, I2c_IRQ, I2c_Xfer, I2c_Use_Internal_Buffer
+    global  I2c_Init_400KHz, I2c_Init, I2c_IRQ, I2c_Drive, I2c_Use_Internal_Buffer
     global  I2c_Test, I2c_Probe
     
     extern UART_Get, UART_Put, UART_Print
@@ -105,16 +105,16 @@ I2c_IRQ:
     banksel SSP1BUF	        ; actual handling code will usually need this bank;
     movwf  PCL			; branch to context-dependent handler
 
-; all I2C reads and writes go (directly or indirectly) via I2c_Xfer.
+; all I2C reads and writes go (directly or indirectly) via I2c_Drive.
 ; !! full parameter description to be added!!
 ; i2c_flags: should be zero before initiating an I2c transfer from a (presumed)
 ; i2c-bus-idle situation. The driver sets bit 0 when starting the transfer and 
 ; clears it when the i2c bus becomes free after the complete chain of 1 or more
 ; i2c transfers.
-; Note, however, that the function 'I2c_Xfer' returns via the user's callback
+; Note, however, that the function 'I2c_Drive' returns via the user's callback
 ; function before issuing the stop condition and - in the case of a read
 ; operation - before ACKing or NACKing the last received byte. A second call to
-; I2c_Xfer is needed to [perform the last ACK/NACK and] issue the stop condition.
+; I2c_Drive is needed to [perform the last ACK/NACK and] issue the stop condition.
 ; This complication is 'hidden' when using the simple 'I2c_sync_Xfer' function
 ; (see below). Its purpose is to facilitate:
 ;   - i2c 'repeated start' implementation.
@@ -123,7 +123,7 @@ I2c_IRQ:
 ;   - other chained operations; one can compose a kind of 'i2c management thread'
 ;     without the need for any OS. This must be used wisely of course like all
 ;     good things!
-I2c_Xfer:    
+I2c_Drive:    
     banksel TOSL
     movf    TOSL,w		; read lower byte of 'return' address
     banksel SSP1CON2		; select SFR bank
@@ -257,15 +257,15 @@ give_stop_cond:
     bra	    do_callback		; NO:-> just do the callback.
     
 
-I2c_Xfer_then_stop:
+I2c_Drive_then_stop:
     clrf    i2c_flags
-    call    I2c_Xfer		; follows through some interrupts later!
-    call    I2c_Xfer		; follows through some interrupts later!
+    call    I2c_Drive		; follows through some interrupts later!
+    call    I2c_Drive		; follows through some interrupts later!
     return
 
 ; I2c_sync_Xfer does a simple read or write transfer and waits for completion.
 I2c_sync_Xfer:
-    call    I2c_Xfer_then_stop	; ordinary call (for a change!)
+    call    I2c_Drive_then_stop	; ordinary call (for a change!)
 I2c_wait:
     banksel SSP1CON2		; select SFR bank
     btfsc   i2c_flags,0		; transfer still in progress?
@@ -297,7 +297,7 @@ I2c_Probe_next:
     bra	    I2c_Probe_next
     ;;bcf	    i2c_flags,1
     call    I2c_Use_Internal_Buffer
-    call    I2c_Xfer
+    call    I2c_Drive
     lsrf   i2c_slave,w
     
     btfss   i2c_flags,1
