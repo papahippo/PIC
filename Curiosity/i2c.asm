@@ -137,8 +137,8 @@ I2c_IRQ:
 ;      1XXA ; 'FINISHED'   = all done; do not call 'I2c_Drive' again with this value!
 ; I2C_Start is a convenience entry point:
 I2c_Start:
-    movlw   b'001'
-    movwf  i2c_control,f
+    movlw   b'010'
+    movwf  i2c_control
 I2c_Drive:
 ; First save the callback address:
     banksel TOSL
@@ -151,7 +151,7 @@ I2c_Drive:
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_callbackH	; save upper byte of 'return' address
 ; Now look what action is required.
-    btfsc   i2c_control,2	; is an i2c_stop required?
+    btfss   i2c_control,2	; is an i2c_stop required?
     bra	    dont_stop		
 ; stop condition required; but maybe need to issue NAK first:
     btfss   i2c_slave,0		; what were we doing? reading or writing?
@@ -173,14 +173,16 @@ dont_stop:
 ; Do we need to issue a start - or maybe repeated start - condition:
     btfss   i2c_control,1
     bra	    no_start
-    btfss   i2c_control,0
-    bra	    give_start_cond
+; If we're arriving here after a stop condition, bit 0 may be set....
+    btfsc   i2c_control,2	; don't be fooled by this; repeated start
+    bra	    give_start_cond	; after stop is simply not allowed!
+    btfss   i2c_control,0	; b'10' => start; b'11' => repeated start
+    bra	    give_start_cond	; after stop is simply not allowed!
 
     bsf     SSP1CON2,RSEN	; initiate I2C bus REPEATED start condition
     bra	    common_start
 
 ; Start condition requested.
-; We set bit 0 now => some I/O required. ?? is this necessary??
 give_start_cond:
     bsf     i2c_control,0	; 1 => Xfer in progress
     btfsc   SSP1STAT,R_NOT_W	; transmit in progress?
@@ -194,6 +196,8 @@ give_start_cond:
 common_start:			; (common to regular and repeated start.)
     call    OnNext_I2c_IRQ
 ; The first interrupt after we cause the start condition gets to here:
+    movlw   b'100'		; preset next major action to 'STOP'
+    movwf   i2c_control
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
   if 0
@@ -246,9 +250,6 @@ no_start:
     btfss   i2c_control,0
     bra	    do_final_callback
 ; By elimination, i2c_control ends with b'001', i.e. 'CONTINUE' 
-more_of_same:
-; branch in here if we need to do more I/O to same slave. callback will have
-; supplied new buffer address and count.
     btfss   i2c_slave,0		; what must we do (first)? read or write?
     bra	    write_next
 ; we didn't (yet) acknowledge the last byte of the previous buffer because we
@@ -282,6 +283,9 @@ I2c_wait:
     goto    $-1
     return
 
+; ============================================================================
+; special function for the case where just one byte is to transferred.
+
 I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_buf		; byte to be written if writing
@@ -292,28 +296,27 @@ I2c_Sync_Xfer_byte:
     movf    i2c_buf,w		; byte just read if reading
     return
 
+; ==============================================================================
+; Utility function to identify which i2c slave addresses are occupied.
 I2c_Probe:
     banksel SSP1CON2		; select SFR bank    
     clrf    i2c_slave
-    incf    i2c_slave
-    clrf    i2c_control
+    bsf     i2c_slave,0		; start by reading from slave with 7-biti addr 0.
     clrf    i2c_control
 I2c_Probe_next:
     movlw   1
     movwf   i2c_count
     movlw   2
-    addwf   i2c_slave,f
-    btfsc   STATUS,C
+    addwf   i2c_slave,f		; step on to next slave
+    btfsc   STATUS,C		; avoid 0  (=general call address)
     bra	    I2c_Probe_next
-    ;;bcf	    i2c_control,1
+    bsf     i2c_control,1	; = request start [after stop]
     call    I2c_Use_Internal_Buffer
     call    I2c_Drive
-    lsrf    i2c_slave,w			; n.b. only changes W reg!
-    
-    btfss   i2c_control,0
-    call    UART_Print
-    banksel SSP1CON2			; select SFR bank    
-    bcf     i2c_control,1		; = remove error condition
+    lsrf    i2c_slave,w		; recover 7-bit address. n.b. only changes W reg!
+    btfss   i2c_control,0	; ACK given?
+    call    UART_Print		; yes! print out 7-bit i2c slave address.
+    banksel SSP1CON2		; select SFR bank
     goto    I2c_Probe_next
 
 I2c_Test:
