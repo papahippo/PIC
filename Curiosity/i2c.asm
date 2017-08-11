@@ -284,7 +284,7 @@ I2c_wait:
     return
 
 ; ============================================================================
-; special function for the case where just one byte is to transferred.
+; Special function for the case where just one byte is to be transferred.
 
 I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
@@ -298,6 +298,8 @@ I2c_Sync_Xfer_byte:
 
 ; ==============================================================================
 ; Utility function to identify which i2c slave addresses are occupied.
+breather:
+    call    UART_Get
 I2c_Probe:
     banksel SSP1CON2		; select SFR bank    
     clrf    i2c_slave
@@ -309,7 +311,7 @@ I2c_Probe_next:
     movlw   2
     addwf   i2c_slave,f		; step on to next slave
     btfsc   STATUS,C		; avoid 0  (=general call address)
-    bra	    I2c_Probe_next
+    bra	    breather ; I2c_Probe_next
     bsf     i2c_control,1	; = request start [after stop]
     call    I2c_Use_Internal_Buffer
     call    I2c_Drive
@@ -317,6 +319,7 @@ I2c_Probe_next:
     btfss   i2c_control,0	; ACK given?
     call    UART_Print		; yes! print out 7-bit i2c slave address.
     banksel SSP1CON2		; select SFR bank
+    bcf	    i2c_control,0
     goto    I2c_Probe_next
 
 I2c_Test:

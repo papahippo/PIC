@@ -57,9 +57,6 @@ UART_Print_LSD:
     addlw   0xf9	    ; -=7 => 0...9 --> 0x36...0x3f -> 0x2f...0x39
     addlw   0x01	    ; and follow thropug to tranmit ASCII digit
 UART_Put:
-    ;banksel PIR1
-    ;btfss   PIR1, TXIF        ; Bit Test File, Skip if Set
-    ;bra	    UART_Put
     banksel TXREG
     btfss   TX1STA,TRMT
     bra	    UART_Put
