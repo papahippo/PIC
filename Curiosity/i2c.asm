@@ -10,7 +10,7 @@
 
  
 I2c_VAR        UDATA	0x220   ; accessible from SSP register bank!
-i2c_flags	    RES	1	; public parameter, also used internally
+i2c_control	    RES	1	; public parameter, also used internally
 i2c_slave	    RES	1       ; public parameter; n.b. 8-bit address + R/W
 i2c_count	    RES	1	; passed in W! buffer size to read/write
 i2c_callbackL	    RES	1	; public parameters = address of code following 
@@ -105,13 +105,9 @@ I2c_IRQ:
     banksel SSP1BUF	        ; actual handling code will usually need this bank;
     movwf  PCL			; branch to context-dependent handler
 
+; ==============================================================================
 ; all I2C reads and writes go (directly or indirectly) via I2c_Drive.
-; !! full parameter description to be added!!
-; i2c_flags: should be zero before initiating an I2c transfer from a (presumed)
-; i2c-bus-idle situation. The driver sets bit 0 when starting the transfer and 
-; clears it when the i2c bus becomes free after the complete chain of 1 or more
-; i2c transfers.
-; Note, however, that the function 'I2c_Drive' returns via the user's callback
+; The function 'I2c_Drive' returns via the user's callback
 ; function before issuing the stop condition and - in the case of a read
 ; operation - before ACKing or NACKing the last received byte. A second call to
 ; I2c_Drive is needed to [perform the last ACK/NACK and] issue the stop condition.
@@ -123,22 +119,64 @@ I2c_IRQ:
 ;   - other chained operations; one can compose a kind of 'i2c management thread'
 ;     without the need for any OS. This must be used wisely of course like all
 ;     good things!
-I2c_Drive:    
+; The following variables form an "I2c control block":
+; I2c_control:  this byte is a pattern of four bits which in general is a
+;		command to the driver telling it what to do next.
+;		bit 0 however is sometimes an error indication by the driver
+;		(A in table below):
+;		A=0 => ok; A=1 => NACK received. X => don't care
+; bit  3210
+; ---  ----
+;
+;      0000 ; 'NO-OP'	   = do no I/O at all; just call the callback.
+;      0001 ; 'CONTINUE'   = don't stop, do more R or W to same slave.
+;      0010 ; 'START'	   = give i2c start condition then proceed with I/O.
+;      0011 ; 'REPEATED START' = give repeated start, then continue with I/O.
+;                    N.B caller must first change R/W bit as (usually) required.
+;      010A ; 'STOP'	   = give i2c_stop condition.
+;      011A ; 'STOP_START_NEW'  ; i2c_slave may be different to last 'START'.
+;      1XXA ; 'FINISHED'   = all done; do not call 'I2c_Drive' again with this value!
+; I2C_Start is a convenience entry point:
+I2c_Start:
+    movlw   b'001'
+    movwf  i2c_control,f
+I2c_Drive:
+; First save the callback address:
     banksel TOSL
     movf    TOSL,w		; read lower byte of 'return' address
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_callbackL	; save lower byte of 'return' address
     banksel TOSH
     movf    TOSH,w		; read upper byte of 'return' address
-    decf    STKPTR
+    decf    STKPTR		; 'pop' address; we mustn't return straigh to it!
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_callbackH	; save upper byte of 'return' address
-    btfsc   i2c_flags,0		; is this a brand new operation?
-    bra	    resuming		
+; Now look what action is required.
+    btfsc   i2c_control,2	; is an i2c_stop reuired?
+    bra	    dont_stop		
+    btfss   i2c_slave,0		; what were we doing? reading or writing?
+    bra	    give_stop_cond	; writing: => can give stop condition now.
+    movf    i2c_active_slave,w	; had we actually read a byte yet?
+    btfsc   STATUS,Z		; YES:-> NACK the last received byte
+    bra	    give_stop_cond	; NO: > mustn't try and NACK byte we never got!
+    
+sendNACK:			; reading: => must NACK first.
+    bsf	    SSP1CON2,ACKDT	; must NACK to make slave get off the bus!
+    bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
+    call    OnNext_I2c_IRQ	; proceed when NACK bit has been sent
+give_stop_cond:
+    bsf	    SSP1CON2,PEN	; generate stop condition
+    call    OnNext_I2c_IRQ	; proceed when stop condition has been given.
+    bcf     i2c_control,2	; stop has been done to no longer required.
+    bcf     i2c_control,0	; erase what was NAK indicator.
+; 'i2c_control' can noe be interpreted just  as in the non-stopping case!
+dont_stop:
+; Do we need to issue a start or maybe reperted start condition:
+
 
   ; Brand new I/O:-> start by giving start condition.
 new_start:
-    bsf     i2c_flags,0		; 1 => Xfer in progress
+    bsf     i2c_control,0		; 1 => Xfer in progress
     btfsc   SSP1STAT,R_NOT_W	; transmit in progress?
     goto    $-1
     movf    SSP1CON2,w
@@ -207,7 +245,7 @@ sendACK:
     bra	    straight_read	; now we must invite the next byte.
     
 IO_error:
-    bsf     i2c_flags,1		; set error flag. callback may clear this.
+    bsf     i2c_control,1		; set error flag. callback may clear this.
 do_callback:
     movf   i2c_callbackH,w
     movwf  PCLATH
@@ -217,7 +255,7 @@ do_callback:
 resuming:
 ; i2c_active_slave is kind of private but may be cleared during callback to
 ; inhibit chaining and use of repeated start.
-    btfsc   i2c_flags,1		; error detected (and not cancelled in callback)
+    btfsc   i2c_control,1		; error detected (and not cancelled in callback)
     bra	    this_slave_done	; YES:-> finish transfer,quit the i2c bus asap.
     movf   i2c_count,w		; more I/O to be done before stop cond.?
     btfsc   STATUS,Z
@@ -235,30 +273,10 @@ resuming:
     bra	    common_start
 
 this_slave_done:
-    btfss   i2c_slave,0		; what were we doing? reading or writing?
-    bra	    give_stop_cond	; writing: => can give stop condition now.
-    movf    i2c_active_slave,w	; had we actually read a byte yet?
-    btfsc   STATUS,Z		; YES:-> NACK the last received byte
-    bra	    give_stop_cond	; NO: > mustn't try and NACK byte we never got!
-    
-sendNACK:			; reading: => must NACK first.
-    bsf	    SSP1CON2,ACKDT	; must NACK to make slave get off the bus!
-    bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
-    call    OnNext_I2c_IRQ	; proceed when NACK bit has been sent
-give_stop_cond:
-    bsf	    SSP1CON2,PEN	; generate stop condition
-    call    OnNext_I2c_IRQ	; proceed when stop condition has been given.
-    bcf     i2c_flags,0		; = operation completed
-    btfsc   i2c_flags,1		; error detected (and not cancelled in callback)
-    bra	    do_callback		; YES:-> just do the callback.
-    movf    i2c_count,w		; follow up I/O to be done?
-    btfss   STATUS,Z
-    bra	    new_start		; YES: > give start cond, address new slave etc.
-    bra	    do_callback		; NO:-> just do the callback.
     
 
 I2c_Drive_then_stop:
-    clrf    i2c_flags
+    clrf    i2c_control
     call    I2c_Drive		; follows through some interrupts later!
     call    I2c_Drive		; follows through some interrupts later!
     return
@@ -268,7 +286,7 @@ I2c_sync_Xfer:
     call    I2c_Drive_then_stop	; ordinary call (for a change!)
 I2c_wait:
     banksel SSP1CON2		; select SFR bank
-    btfsc   i2c_flags,0		; transfer still in progress?
+    btfsc   i2c_control,0		; transfer still in progress?
     goto    $-1
     return
 
@@ -286,8 +304,8 @@ I2c_Probe:
     banksel SSP1CON2		; select SFR bank    
     clrf    i2c_slave
     incf    i2c_slave
-    clrf    i2c_flags
-    clrf    i2c_flags
+    clrf    i2c_control
+    clrf    i2c_control
 I2c_Probe_next:
     movlw   1
     movwf   i2c_count
@@ -295,15 +313,15 @@ I2c_Probe_next:
     addwf   i2c_slave,f
     btfsc   STATUS,C
     bra	    I2c_Probe_next
-    ;;bcf	    i2c_flags,1
+    ;;bcf	    i2c_control,1
     call    I2c_Use_Internal_Buffer
     call    I2c_Drive
     lsrf   i2c_slave,w
     
-    btfss   i2c_flags,1
+    btfss   i2c_control,1
     call    UART_Print
     banksel SSP1CON2		; select SFR bank    
-    bcf     i2c_flags,1		; = remove error condition
+    bcf     i2c_control,1		; = remove error condition
     goto    I2c_Probe_next
 
 I2c_Test:
