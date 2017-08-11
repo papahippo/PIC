@@ -15,7 +15,6 @@ i2c_slave	    RES	1       ; public parameter; n.b. 8-bit address + R/W
 i2c_count	    RES	1	; passed in W! buffer size to read/write
 i2c_callbackL	    RES	1	; public parameters = address of code following 
 i2c_callbackH	    RES	1	;      call to I2c_Drive
-i2c_active_slave    RES 1	; private parameter to deteremine special cases
 i2c_reserved	    RES	d'10'
 i2c_buf		    RES	32	; temporary! buffer access code not yet written.
 
@@ -111,7 +110,7 @@ I2c_IRQ:
 ; function before issuing the stop condition and - in the case of a read
 ; operation - before ACKing or NACKing the last received byte. A second call to
 ; I2c_Drive is needed to [perform the last ACK/NACK and] issue the stop condition.
-; This complication is 'hidden' when using the simple 'I2c_sync_Xfer' function
+; This complication is 'hidden' when using the simple 'I2c_Sync_Xfer' function
 ; (see below). Its purpose is to facilitate:
 ;   - i2c 'repeated start' implementation.
 ;   - continuous input or ouput of more bytes than are contiguously available
@@ -152,15 +151,15 @@ I2c_Drive:
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_callbackH	; save upper byte of 'return' address
 ; Now look what action is required.
-    btfsc   i2c_control,2	; is an i2c_stop reuired?
+    btfsc   i2c_control,2	; is an i2c_stop required?
     bra	    dont_stop		
+; stop condition required; but maybe need to issue NAK first:
     btfss   i2c_slave,0		; what were we doing? reading or writing?
     bra	    give_stop_cond	; writing: => can give stop condition now.
-    movf    i2c_active_slave,w	; had we actually read a byte yet?
-    btfsc   STATUS,Z		; YES:-> NACK the last received byte
+    btfsc   i2c_control,0	; did we read byte(s)? (no NACK on slave adddress)
     bra	    give_stop_cond	; NO: > mustn't try and NACK byte we never got!
     
-sendNACK:			; reading: => must NACK first.
+sendNACK:			; we'd really started reading: => must NACK first.
     bsf	    SSP1CON2,ACKDT	; must NACK to make slave get off the bus!
     bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
     call    OnNext_I2c_IRQ	; proceed when NACK bit has been sent
@@ -169,14 +168,21 @@ give_stop_cond:
     call    OnNext_I2c_IRQ	; proceed when stop condition has been given.
     bcf     i2c_control,2	; stop has been done to no longer required.
     bcf     i2c_control,0	; erase what was NAK indicator.
-; 'i2c_control' can noe be interpreted just  as in the non-stopping case!
+; 'i2c_control' can now be interpreted just  as in the non-stopping case!
 dont_stop:
-; Do we need to issue a start or maybe reperted start condition:
+; Do we need to issue a start - or maybe repeated start - condition:
+    btfss   i2c_control,1
+    bra	    no_start
+    btfss   i2c_control,0
+    bra	    give_start_cond
 
+    bsf     SSP1CON2,RSEN	; initiate I2C bus REPEATED start condition
+    bra	    common_start
 
-  ; Brand new I/O:-> start by giving start condition.
-new_start:
-    bsf     i2c_control,0		; 1 => Xfer in progress
+; Start condition requested.
+; We set bit 0 now => some I/O required. ?? is this necessary??
+give_start_cond:
+    bsf     i2c_control,0	; 1 => Xfer in progress
     btfsc   SSP1STAT,R_NOT_W	; transmit in progress?
     goto    $-1
     movf    SSP1CON2,w
@@ -187,7 +193,6 @@ new_start:
     bsf     SSP1CON2,SEN	; initiate I2C bus start condition
 common_start:			; (common to regular and repeated start.)
     call    OnNext_I2c_IRQ
-    clrf    i2c_active_slave	; slave not yet known to be 'at home'
 ; The first interrupt after we cause the start condition gets to here:
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
@@ -196,16 +201,16 @@ common_start:			; (common to regular and repeated start.)
     call    UART_Put
     banksel SSP1CON2		; select SFR bank
   endif
-; We privately remember the slave address and R/W bit so that, following a
-; a callback, we can correctly identify repeated start and other conditions.
     call    OnNext_I2c_IRQ	; proceed when slave address has been written
 ;The first interrupt after we write the slave address gets to here:
     btfsc   SSP1CON2,ACKSTAT	; did our presumed slave acknowledge?
-    bra	    IO_error		; no? waste no more time. get off i2c bus asap.
-    movf    i2c_slave,w		; this slave had responded to its address
-    movwf   i2c_active_slave	; save a copy of its address
+    bra	    slave_NACKed	; no? waste no more time. get off i2c bus asap.
     btfsc   i2c_slave,0		; what must we do (first)? read or write?
     bra	    straight_read	; immediate read (e.g. no sub-address to write).
+    bra	    write_next
+slave_NACKed:
+    bsf     i2c_control,0	; set error (NAK) flag. callback may clear this.
+    bra	    do_callback
 write_next:
     movf    INDF1,w             ; retrieve next byte to write into w
     incf    FSR1,f              ; increment pointer
@@ -229,74 +234,61 @@ straight_read:
     incf    FSR1,f              ; increment pointer
     decf    i2c_count,f		; count down. also determines choice of ACK/NACK
     btfsc   STATUS,Z
-    bra	    do_callback ; DoneLastRead    
-
-; branch in here if we need to do more I/O to same slave. callback will have
-; supplied new buffer address and count.
-more_of_same:
-    btfss   i2c_slave,0		; what must we do (first)? read or write?
-    bra	    write_next
-; we didn't (yet) acknowledge the last byte of the previous buffer because we
-; didn't know whether it was the last. we now know that it is wasn't.
+    bra	    do_callback
 sendACK:
     bcf	    SSP1CON2,ACKDT	; must ACK to encourage slave to keep sending.
     bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
     call    OnNext_I2c_IRQ	; proceed when ACK bit has been sent
     bra	    straight_read	; now we must invite the next byte.
-    
-IO_error:
-    bsf     i2c_control,1		; set error flag. callback may clear this.
+
+; Start condition is not required; must check for the 'NOOP' case!
+no_start:
+    btfss   i2c_control,0
+    bra	    do_final_callback
+; By elimination, i2c_control ends with b'001', i.e. 'CONTINUE' 
+more_of_same:
+; branch in here if we need to do more I/O to same slave. callback will have
+; supplied new buffer address and count.
+    btfss   i2c_slave,0		; what must we do (first)? read or write?
+    bra	    write_next
+; we didn't (yet) acknowledge the last byte of the previous buffer because we
+; didn't know whether it was the last. we now know that it is wasn't.
+    bra	    sendACK
+
+do_final_callback:
+    bsf     i2c_control,3	; mark transfer as really finished.
 do_callback:
     movf   i2c_callbackH,w
     movwf  PCLATH
     movf   i2c_callbackL,w
     movwf  PCL			; branch to context-dependent handler
+   
 
-resuming:
-; i2c_active_slave is kind of private but may be cleared during callback to
-; inhibit chaining and use of repeated start.
-    btfsc   i2c_control,1		; error detected (and not cancelled in callback)
-    bra	    this_slave_done	; YES:-> finish transfer,quit the i2c bus asap.
-    movf   i2c_count,w		; more I/O to be done before stop cond.?
-    btfsc   STATUS,Z
-    bra	    this_slave_done		; NO:-> finish transfer,quit the i2c bus asap.
-				; YES:-> must check for special cases!
-    movwf   i2c_active_slave	; what slave were we dealing with
-    subwf   i2c_slave,w		; same slave and same direction (R/W)?
-    btfsc   STATUS,Z
-    bra	    more_of_same	; YES:-> carry on.
-    andlw   0xfe			; NO:-> Read after write to same slave address?
-    btfss   STATUS,Z
-    bra	    this_slave_done	; NO: => must stop 
-				; yes => need to give repeated start.
-    bsf     SSP1CON2,RSEN	; initiate I2C bus REPEATED start condition
-    bra	    common_start
-
-this_slave_done:
-    
-
-I2c_Drive_then_stop:
-    clrf    i2c_control
-    call    I2c_Drive		; follows through some interrupts later!
+; ============================================================================
+; i2c_Simple_Transfer does a simple i2c i2c ttransfer including start and stop
+; conditions, with no real callback functionality.
+i2c_Simple_Transfer:
+    call    I2c_Start		; follows through some interrupts later!
     call    I2c_Drive		; follows through some interrupts later!
     return
 
-; I2c_sync_Xfer does a simple read or write transfer and waits for completion.
-I2c_sync_Xfer:
-    call    I2c_Drive_then_stop	; ordinary call (for a change!)
+; ============================================================================
+; I2c_Sync_Xfer does a simple read or write transfer and waits for completion.
+I2c_Sync_Xfer:
+    call    i2c_Simple_Transfer	; ordinary call (for a change!)
 I2c_wait:
     banksel SSP1CON2		; select SFR bank
-    btfsc   i2c_control,0		; transfer still in progress?
+    btfss   i2c_control,3	; transfer finished?
     goto    $-1
     return
 
-I2c_sync_Xfer_byte:
+I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_buf		; byte to be written if writing
     call    I2c_Use_Internal_Buffer
     movlw   1
     movwf   i2c_count
-    call    I2c_sync_Xfer
+    call    I2c_Sync_Xfer
     movf    i2c_buf,w		; byte just read if reading
     return
 
@@ -316,11 +308,11 @@ I2c_Probe_next:
     ;;bcf	    i2c_control,1
     call    I2c_Use_Internal_Buffer
     call    I2c_Drive
-    lsrf   i2c_slave,w
+    lsrf    i2c_slave,w			; n.b. only changes W reg!
     
-    btfss   i2c_control,1
+    btfss   i2c_control,0
     call    UART_Print
-    banksel SSP1CON2		; select SFR bank    
+    banksel SSP1CON2			; select SFR bank    
     bcf     i2c_control,1		; = remove error condition
     goto    I2c_Probe_next
 
@@ -334,14 +326,14 @@ I2c_Test:
     movwf   i2c_slave		; this is an 8-bit address!
     movlw   0xff
 I2c_write_loop:
-    call    I2c_sync_Xfer_byte
+    call    I2c_Sync_Xfer_byte
 ;;    addlw   0xff		; W -= 1
 ;;    goto    I2c_write_loop
     bsf    i2c_slave,0		; now set the R bit!
 I2c_read_loop:
     banksel SSP1CON2		; select SFR bank    
     incf    i2c_count,f		; count will have gone to zero.
-    call    I2c_sync_Xfer
+    call    I2c_Sync_Xfer
     btfsc   WREG,7		; look for IO pin 7 being pulled down
     goto    I2c_read_loop    
     goto    I2c_read_loop	; set breakpoint here to detect low pin7.
