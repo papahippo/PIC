@@ -62,7 +62,7 @@ I2c_Init:
     movwf   SSP1CON1		; Master mode, SSP enable
 ; The followng call is just a long-stop in-case an i2c interrupt happens
 ; before we expect it. In that case the following return is harmless.
-    call    OnNext_I2c_IRQ
+; problematic with bororwig PCLATH! ... call    OnNext_I2c_IRQ
     return
 
 I2c_Use_Internal_Buffer:
@@ -74,19 +74,20 @@ I2c_Use_Internal_Buffer:
     return
 
 OnNext_I2c_IRQ:
-;    movf    FSR1L,w
-;    movwf   i2c_bufPtrL
-;    movf    FSR1H,w
-;    movwf   i2c_bufPtrH
+    movf    FSR1L,w
+    movwf   i2c_bufPtrL
+    movf    FSR1H,w
+    movwf   i2c_bufPtrH
     banksel TOSL
     movf    TOSL,w
-    movwf   PCLATH		; borrow this register!
+    banksel SSP1CON2
+    movwf   i2c_IRQ_TOSL
+;;    movwf   PCLATH		; borrow this register!
+    banksel TOSH
     movf    TOSH,w
     decf    STKPTR,f
     banksel SSP1CON2
     movwf   i2c_IRQ_TOSH
-    movf    PCLATH,w
-    movwf   i2c_IRQ_TOSL
     banksel PIE1		; now our 'vector' is written it is safe to allow
     bsf	    PIE1,SSP1IF		; the next interrupt to arrive.
     banksel SSP1BUF
@@ -106,10 +107,14 @@ I2c_IRQ:
     banksel PIE1
     bcf	    PIE1,SSP1IF		; interrupt from occurring before our context is set
     banksel SSP1CON2
-    movf   i2c_IRQ_TOSH,w	; we now dispatch (tricky goto!) the code address
-    movwf  PCLATH		; set by the last call to 'OnNext_I2c_IRQ'.
-    movf   i2c_IRQ_TOSL,w
-    movwf  PCL			; branch to context-dependent handler
+    movf    i2c_bufPtrH,w
+    movwf   FSR1H
+    movf    i2c_bufPtrL,w
+    movwf   FSR1L
+    movf    i2c_IRQ_TOSH,w	; we now dispatch (tricky goto!) the code address
+    movwf   PCLATH		; set by the last call to 'OnNext_I2c_IRQ'.
+    movf    i2c_IRQ_TOSL,w
+    movwf   PCL			; branch to context-dependent handler
 
 ; ==============================================================================
 ; all I2C reads and writes go (directly or indirectly) via I2c_Drive.
@@ -335,6 +340,7 @@ I2c_Probe_next:
     goto    I2c_Probe_next
 
 I2c_Test:
+ ;;   goto I2c_Probe
 I2c_Test_synch_echo:
 ; input character from UART, write to I/O expander, read back, output ASCII value
 ; to UART. character should be unchanges except when I/O expander pins
@@ -351,7 +357,8 @@ I2c_Test_synch_echo:
     call    UART_Print
     btfss   STATUS,Z
     goto    I2c_Test_synch_echo
-
+    movlw   ";"
+    call    UART_Put 
 ; no more tests
     return
     END

@@ -10,17 +10,6 @@
     extern UART_Init, UART_Get, UART_Put, UART_Test
     extern I2c_Init, I2c_Init_400KHz, I2c_Test, I2c_IRQ, I2c_Probe
 
-;*******    INTERRUPT CONTEXT SAVE/RESTORE VARIABLES
-INT_VAR        UDATA   0x20              ; create uninitialized data "udata" section
-w_temp           RES     1               ;
-status_temp      RES     1               ;
-pclath_temp      RES     1
-bsr_temp         RES     1
-
-INT_VAR1       UDATA   0xA0              ; reserve location 0xA0
-w_temp1          RES     1
-
-
 
 ;----------------------------------------------------------------------
 ;   ********************* RESET VECTOR LOCATION  ********************
