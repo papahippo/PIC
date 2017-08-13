@@ -47,6 +47,10 @@ UART_Print: ; output byte value to UART as two printable hex digits.
     movlw   "x"
     call    UART_Put
     call    UART_Print_MSD
+    call    UART_Print_MSD
+    movf   0x7f,w
+    return
+
 UART_Print_MSD:
     swapf   0x7f,f
 UART_Print_LSD:
@@ -55,7 +59,7 @@ UART_Print_LSD:
     addlw   0x36	    ; 0...f --> 0x36... 0x45  
     btfss   STATUS,DC	    ; skip if was a-f
     addlw   0xf9	    ; -=7 => 0...9 --> 0x36...0x3f -> 0x2f...0x39
-    addlw   0x01	    ; and follow thropug to tranmit ASCII digit
+    addlw   0x01	    ; and follow through to tranmit ASCII digit
 UART_Put:
     banksel TXREG
     btfss   TX1STA,TRMT

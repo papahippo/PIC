@@ -15,8 +15,10 @@ i2c_slave	    RES	1       ; public parameter; n.b. 8-bit address + R/W
 i2c_count	    RES	1	; passed in W! buffer size to read/write
 i2c_callbackL	    RES	1	; public parameters = address of code following 
 i2c_callbackH	    RES	1	;      call to I2c_Drive
+i2c_bufPtrL	    RES	1 
+i2c_bufPtrH	    RES	1
 i2c_reserved	    RES	d'10'
-i2c_buf		    RES	32	; temporary! buffer access code not yet written.
+i2c_buf		    RES	24
 
 I2c CODE			; let linker place this
 
@@ -74,6 +76,10 @@ I2c_Use_Internal_Buffer:
     return
 
 OnNext_I2c_IRQ:
+    movf    FSR1L,w
+    movwf   i2c_bufPtrL
+    movf    FSR1H,w
+    movwf   i2c_bufPtrL
     banksel TOSL
     movf	TOSL,w
     movwf	i2c_IRQ_TOSL
@@ -137,8 +143,7 @@ I2c_IRQ:
 ;      1XXA ; 'FINISHED'   = all done; do not call 'I2c_Drive' again with this value!
 ; I2C_Start is a convenience entry point:
 I2c_Start:
-    movlw   b'010'
-    movwf  i2c_control
+    bsf  i2c_control,1		; start condition required
 I2c_Drive:
 ; First save the callback address:
     banksel TOSL
@@ -150,6 +155,11 @@ I2c_Drive:
     decf    STKPTR		; 'pop' address; we mustn't return straigh to it!
     banksel SSP1CON2		; select SFR bank
     movwf   i2c_callbackH	; save upper byte of 'return' address
+; now save buffer address, passed in FSR1:
+    movf    FSR1L,w
+    movwf   i2c_bufPtrL
+    movf    FSR1H,w
+    movwf   i2c_bufPtrH
 ; Now look what action is required.
     btfss   i2c_control,2	; is an i2c_stop required?
     bra	    dont_stop		
@@ -184,7 +194,7 @@ dont_stop:
 
 ; Start condition requested.
 give_start_cond:
-    bsf     i2c_control,0	; 1 => Xfer in progress
+    ;bsf     i2c_control,0	; 1 => Xfer in progress
     btfsc   SSP1STAT,R_NOT_W	; transmit in progress?
     goto    $-1
     movf    SSP1CON2,w
@@ -196,8 +206,7 @@ give_start_cond:
 common_start:			; (common to regular and repeated start.)
     call    OnNext_I2c_IRQ
 ; The first interrupt after we cause the start condition gets to here:
-    movlw   b'100'		; preset next major action to 'STOP'
-    movwf   i2c_control
+    bcf	    i2c_control,1	; start no longer required
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
   if 0
@@ -206,6 +215,7 @@ common_start:			; (common to regular and repeated start.)
     banksel SSP1CON2		; select SFR bank
   endif
     call    OnNext_I2c_IRQ	; proceed when slave address has been written
+    bsf	    i2c_control,2	; preset next major action to 'STOP'
 ;The first interrupt after we write the slave address gets to here:
     btfsc   SSP1CON2,ACKSTAT	; did our presumed slave acknowledge?
     bra	    slave_NACKed	; no? waste no more time. get off i2c bus asap.
@@ -234,7 +244,7 @@ straight_read:
     bsf	    SSP1CON2,RCEN	; enable receive
     call    OnNext_I2c_IRQ	; must wait for slave to pulse out data byte
     movf    SSP1BUF,w
-    movwf   INDF1		; STUB! must index buffer here!
+    movwf   INDF1		;
     incf    FSR1,f              ; increment pointer
     decf    i2c_count,f		; count down. also determines choice of ACK/NACK
     btfsc   STATUS,Z
@@ -269,6 +279,7 @@ do_callback:
 ; i2c_Simple_Transfer does a simple i2c i2c ttransfer including start and stop
 ; conditions, with no real callback functionality.
 i2c_Simple_Transfer:
+    clrf    i2c_control
     call    I2c_Start		; follows through some interrupts later!
     call    I2c_Drive		; follows through some interrupts later!
     return
@@ -323,27 +334,25 @@ I2c_Probe_next:
     goto    I2c_Probe_next
 
 I2c_Test:
-;    call    UART_Get
-;    call    UART_Print
-    goto    I2c_Probe
-
+I2c_Test_synch_echo:
+; input character from UART, write to I/O expander, read back, output ASCII value
+; to UART. character should be unchanges except when I/O expander pins
+; are pulled down externally. On my breadboard, bits 5 and7 are pulled down.
+; (null character or) space character input terminates test.
+;
     banksel SSP1CON2		; select SFR bank
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave		; this is an 8-bit address!
-    movlw   0xff
-I2c_write_loop:
+    call    UART_Get
     call    I2c_Sync_Xfer_byte
-;;    addlw   0xff		; W -= 1
-;;    goto    I2c_write_loop
-    bsf    i2c_slave,0		; now set the R bit!
-I2c_read_loop:
-    banksel SSP1CON2		; select SFR bank    
-    incf    i2c_count,f		; count will have gone to zero.
-    call    I2c_Sync_Xfer
-    btfsc   WREG,7		; look for IO pin 7 being pulled down
-    goto    I2c_read_loop    
-    goto    I2c_read_loop	; set breakpoint here to detect low pin7.
-  
+    bsf     i2c_slave,0		; now set the R bit!
+    call    I2c_Sync_Xfer_byte
+    call    UART_Print
+    btfss   STATUS,Z
+    goto    I2c_Test_synch_echo
+
+; no more tests
+    return
     END
 
 I
