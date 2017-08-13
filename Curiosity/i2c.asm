@@ -136,20 +136,25 @@ I2c_IRQ:
 ;		bit 0 however is sometimes an error indication by the driver
 ;		(A in table below):
 ;		A=0 => ok; A=1 => NACK received. X => don't care
-; bit  3210
-; ---  ----
+; bit  7654 3210
+; ---  ---- ----
 ;
-;      0000 ; 'NO-OP'	   = do no I/O at all; just call the callback.
-;      0001 ; 'CONTINUE'   = don't stop, do more R or W to same slave.
-;      0010 ; 'START'	   = give i2c start condition then proceed with I/O.
-;      0011 ; 'REPEATED START' = give repeated start, then continue with I/O.
+;           0000 ; 'NO-OP'	   = do no I/O at all; just call the callback.
+;           0001 ; 'CONTINUE'   = don't stop, do more R or W to same slave.
+;           0010 ; 'START'	   = give i2c start condition then proceed with I/O.
+;           0011 ; 'REPEATED START' = give repeated start, then continue with I/O.
 ;                    N.B caller must first change R/W bit as (usually) required.
-;      010A ; 'STOP'	   = give i2c_stop condition.
-;      011A ; 'STOP_START_NEW'  ; i2c_slave may be different to last 'START'.
-;      1XXA ; 'FINISHED'   = all done; do not call 'I2c_Drive' again with this value!
-; I2C_Start is a convenience entry point:
+;           010A ; 'STOP'	   = give i2c_stop condition.
+;           011A ; 'STOP_START_NEW'  ; i2c_slave may be different to last 'START'.
+;         1 XXXA ; 'FINISHED'   = all done; do not call 'I2c_Drive' again with this value!
+; bit 5 can be set to request "verify mode" when reading; the input byte is compared
+; against the existing byte, If it is different, bit 4 is set and the transfer of
+; any remaining bytes is skipped.
+; I2c_Clean_Start and I2C_Start are extra entry points for convenience.
+I2c_Clean_Start:
+    clrf    i2c_control
 I2c_Start:
-    bsf  i2c_control,1		; start condition required
+    bsf	    i2c_control,1	; start condition required
 I2c_Drive:
 ; First save the callback address:
     banksel TOSL
@@ -193,7 +198,7 @@ dont_stop:
     btfsc   i2c_control,2	; don't be fooled by this; repeated start
     bra	    give_start_cond	; after stop is simply not allowed!
     btfss   i2c_control,0	; b'10' => start; b'11' => repeated start
-    bra	    give_start_cond	; after stop is simply not allowed!
+    bra	    give_start_cond
 
     bsf     SSP1CON2,RSEN	; initiate I2C bus REPEATED start condition
     bra	    common_start
@@ -282,11 +287,10 @@ do_callback:
    
 
 ; ============================================================================
-; i2c_Simple_Transfer does a simple i2c i2c ttransfer including start and stop
+; i2c_Simple_Transfer does a simple i2c transfer including start and stop
 ; conditions, with no real callback functionality.
 i2c_Simple_Transfer:
-    clrf    i2c_control
-    call    I2c_Start		; follows through some interrupts later!
+    call    I2c_Clean_Start	; follows through some interrupts later!
     call    I2c_Drive		; follows through some interrupts later!
     return
 
@@ -340,7 +344,7 @@ I2c_Probe_next:
     goto    I2c_Probe_next
 
 I2c_Test:
- ;;   goto I2c_Probe
+;    goto    I2c_Test_dummy_verify
 I2c_Test_synch_echo:
 ; input character from UART, write to I/O expander, read back, output ASCII value
 ; to UART. character should be unchanges except when I/O expander pins
@@ -361,6 +365,56 @@ I2c_Test_synch_echo:
     call    UART_Put 
 ; no more tests
     return
+
+I2c_Test_dummy_verify:
+; The verify function is really intended for making extra sure that e.g.
+; register settings of an I2c amplifier control chip have been written 
+; correctly. This test, however, uses a simple I/O expander. This has the advantage
+; that a 'verify' error can be simulated simply by tying down one or more I/O pins
+; and writing one(s) to the corresponding bit(s).
+    banksel SSP1CON2		; select SFR bank
+    clrf    i2c_control
+next_char:
+    call    UART_Get
+    banksel SSP1CON2		; select SFR bank
+    movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
+    movwf   i2c_slave		; this is an 8-bit address!
+now_verify:
+    banksel SSP1CON2		; select SFR bank
+    call    I2c_Use_Internal_Buffer
+    call    I2c_Start
+    btfsc   i2c_control,0	; is our slave at home and answering the door?
+    bra	    error_NAK
+    btfsc   i2c_control,5	; were we already doing the verify?
+    bra	    done_verify
+    bsf	    i2c_control,5	; must do verify now.
+    bsf	    i2c_slave,0		; switch to read address
+    bra	    now_verify
+
+error_NAK:
+    movlw   "_"
+    bra	    done_one_char
+
+done_verify:
+    movlw   "?"
+    btfss   i2c_control,4	; verify error?
+    movlw   "="
+done_one_char:
+    bcf	    i2c_control,0	; clear any NAK error
+    bcf	    i2c_control,4	; clear any verify error
+    call    UART_Put
+    movf    i2c_buf,w
+    call    UART_Print
+    btfss   STATUS,Z
+    bra	    next_char
+;important; must cal one omore time with start request to get stop condition!
+    banksel SSP1CON2		; select SFR bank
+    call   I2c_Drive
+
+; no more tests
+    return
+
+
     END
 
 I
