@@ -25,7 +25,7 @@ w_temp1          RES     1
 ;----------------------------------------------------------------------
 ;   ********************* RESET VECTOR LOCATION  ********************
 ;----------------------------------------------------------------------
-RESET_VECTOR  CODE    0x000              ; processor reset vector
+RESET_VECTOR  CODE    0x000          ; processor reset vector
     movlw  high  Start               ; load upper byte of 'start' label
     movwf  PCLATH                    ; initialize PCLATH
     goto   Start                     ; go to beginning of program

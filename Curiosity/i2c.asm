@@ -3,10 +3,6 @@
 #define  I2CClock    D'400000'           ; define I2C bite rate
 #define  ClockValue400KHz  (((FOSC/I2CClock)/4) -1) ; 
        ; general purpose memory usage:
-    cblock 0x72                 ; shared memory accessible from all banks
-    i2c_IRQ_TOSL
-    i2c_IRQ_TOSH
-    endc
 
  
 I2c_VAR        UDATA	0x220   ; accessible from SSP register bank!
@@ -17,7 +13,9 @@ i2c_callbackL	    RES	1	; public parameters = address of code following
 i2c_callbackH	    RES	1	;      call to I2c_Drive
 i2c_bufPtrL	    RES	1 
 i2c_bufPtrH	    RES	1
-i2c_reserved	    RES	d'10'
+i2c_IRQ_TOSL	    RES 1
+i2c_IRQ_TOSH	    RES 1
+i2c_reserved	    RES	6
 i2c_buf		    RES	24
 
 I2c CODE			; let linker place this
@@ -76,19 +74,22 @@ I2c_Use_Internal_Buffer:
     return
 
 OnNext_I2c_IRQ:
-    movf    FSR1L,w
-    movwf   i2c_bufPtrL
-    movf    FSR1H,w
-    movwf   i2c_bufPtrL
+;    movf    FSR1L,w
+;    movwf   i2c_bufPtrL
+;    movf    FSR1H,w
+;    movwf   i2c_bufPtrH
     banksel TOSL
-    movf	TOSL,w
-    movwf	i2c_IRQ_TOSL
-    movf	TOSH,w
-    movwf	i2c_IRQ_TOSH
-    decf	STKPTR,f
+    movf    TOSL,w
+    movwf   PCLATH		; borrow this register!
+    movf    TOSH,w
+    decf    STKPTR,f
+    banksel SSP1CON2
+    movwf   i2c_IRQ_TOSH
+    movf    PCLATH,w
+    movwf   i2c_IRQ_TOSL
     banksel PIE1		; now our 'vector' is written it is safe to allow
     bsf	    PIE1,SSP1IF		; the next interrupt to arrive.
-    banksel SSP1CON
+    banksel SSP1BUF
     return
 
 I2c_IRQ:
@@ -103,11 +104,11 @@ I2c_IRQ:
 ; we disable SSP (hence I2c) interrupts during the handler; this is necessary to
 ; make our dispaching code safe but of course means a little extra IRQ latency.
     banksel PIE1
-    bcf	    PIE1,SSP1IF		; interrpt from occurring before our context is set
+    bcf	    PIE1,SSP1IF		; interrupt from occurring before our context is set
+    banksel SSP1CON2
     movf   i2c_IRQ_TOSH,w	; we now dispatch (tricky goto!) the code address
     movwf  PCLATH		; set by the last call to 'OnNext_I2c_IRQ'.
     movf   i2c_IRQ_TOSL,w
-    banksel SSP1BUF	        ; actual handling code will usually need this bank;
     movwf  PCL			; branch to context-dependent handler
 
 ; ==============================================================================
