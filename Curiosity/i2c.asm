@@ -2,10 +2,8 @@
 #define FOSC D'32000000'
 #define  I2CClock    D'400000'           ; define I2C bite rate
 #define  ClockValue400KHz  (((FOSC/I2CClock)/4) -1) ; 
-       ; general purpose memory usage:
 
- 
-I2c_VAR        UDATA	0x220   ; accessible from SSP register bank!
+I2c_VAR	           UDATA 0x220	; accessible from SSP register bank!
 i2c_control	    RES	1	; public parameter, also used internally
 i2c_slave	    RES	1       ; public parameter; n.b. 8-bit address + R/W
 i2c_count	    RES	1	; passed in W! buffer size to read/write
@@ -210,13 +208,7 @@ common_start:			; (common to regular and repeated start.)
     bcf	    i2c_control,1	; start no longer required
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
-  if 0
-    movlw   0x41
-    call    UART_Put
-    banksel SSP1CON2		; select SFR bank
-  endif
     call    OnNext_I2c_IRQ	; proceed when slave address has been written
-    bsf	    i2c_control,2	; preset next major action to 'STOP'
 ;The first interrupt after we write the slave address gets to here:
     btfsc   SSP1CON2,ACKSTAT	; did our presumed slave acknowledge?
     bra	    slave_NACKed	; no? waste no more time. get off i2c bus asap.
@@ -289,7 +281,7 @@ do_callback:
 ; conditions, with no real callback functionality.
 i2c_Simple_Transfer:
     call    I2c_Clean_Start	; follows through some interrupts later!
-    bsf	    i2c_control,2	; just stop
+    bsf	    i2c_control,2	; request no more I/O no start, just stop!
     call    I2c_Drive		; follows through some interrupts later!
     return
 
@@ -363,8 +355,6 @@ I2c_Test_synch_echo:
     goto    I2c_Test_synch_echo
     movlw   ";"
     call    UART_Put 
-; no more tests
-    return
 
 I2c_Test_dummy_verify:
 ; The verify function is really intended for making extra sure that e.g.
@@ -372,12 +362,15 @@ I2c_Test_dummy_verify:
 ; correctly. This test, however, uses a simple I/O expander. This has the advantage
 ; that a 'verify' error can be simulated simply by tying down one or more I/O pins
 ; and writing one(s) to the corresponding bit(s).
-    banksel SSP1CON2		; select SFR bank
-    clrf    i2c_control
-next_char:
     call    UART_Get
+    call    dummy_write_verify
+    call    I2c_wait
+    bra	    I2c_Test_dummy_verify
+
+dummy_write_verify:
     banksel SSP1CON2		; select SFR bank
     movwf    i2c_buf
+    clrf    i2c_control
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave		; this is an 8-bit address!
 now_verify:
@@ -404,21 +397,15 @@ done_verify:
     btfss   i2c_control,5	; verify error?
     movlw   "="
 done_one_char:
+    call    UART_Put
     bcf	    i2c_control,6	; clear any NAK error
     bcf	    i2c_control,5	; clear any verify error
-    call    UART_Put
+    bsf	    i2c_control,2	; i2c stop needed before the next i2c start!
+    call    I2c_Drive		; don't delay the stop
     banksel SSP1CON2		; select SFR bank
     movf    i2c_buf,w
     call    UART_Print
-    btfss   STATUS,Z
-    bra	    next_char
-;important; must cal one omore time with start request to get stop condition!
-    banksel SSP1CON2		; select SFR bank
-    call   I2c_Drive
-
-; no more tests
     return
-
 
     END
 

@@ -2,7 +2,7 @@
  
 LED CODE                      ; let linker place this
 
-    global LED_Init, LED_Cycle
+    global LED_Init, LED_Test
     extern OnNext_Timer1_IRQ
 
 LED_Init:
@@ -25,6 +25,7 @@ LED_Init:
 
     return
 
+LED_Test:
 LED_Cycle:
 	  ;state of LEDs D7654
     call    OnNext_Timer1_IRQ; ====
