@@ -15,6 +15,7 @@ i2c_bufPtrL	    RES	1
 i2c_bufPtrH	    RES	1
 i2c_IRQ_TOSL	    RES 1
 i2c_IRQ_TOSH	    RES 1
+i2c_bad_bits	    RES 1
 i2c_reserved	    RES	6
 i2c_buf		    RES	24
 
@@ -229,11 +230,6 @@ write_next:
     movf    INDF1,w             ; retrieve next byte to write into w
     incf    FSR1,f              ; increment pointer
     movwf   SSP1BUF		; write the data byte
-  if 0
-    movlw   0x44
-    call    UART_Put
-    banksel SSP1CON2		; select SFR bank
-  endif
     call    OnNext_I2c_IRQ	; proceed when the data byte has been written
     decf    i2c_count,f		; and another one bites the bus!
     btfss   STATUS,Z		; any more to write from this buffer?
@@ -244,17 +240,29 @@ straight_read:
     bsf	    SSP1CON2,RCEN	; enable receive
     call    OnNext_I2c_IRQ	; must wait for slave to pulse out data byte
     movf    SSP1BUF,w
+    btfsc   i2c_control,4	; verify required?
+    bra	    verify
     movwf   INDF1		;
+verified_ok:
     incf    FSR1,f              ; increment pointer
     decf    i2c_count,f		; count down. also determines choice of ACK/NACK
     btfsc   STATUS,Z
-    bsf	    i2c_control,3	; acknowledge cycle owed.
-    bra	    do_callback
+    bra	    postpone_ACK
 sendACK:
     bcf	    SSP1CON2,ACKDT	; must ACK to encourage slave to keep sending.
     bsf     SSP1CON2,ACKEN	; initiate acknowledge sequence
     call    OnNext_I2c_IRQ	; proceed when ACK bit has been sent
     bra	    straight_read	; now we must invite the next byte.
+
+verify:
+    xorwf   INDF1,w		; value read is same as buffer content?
+    btfsc   STATUS,Z
+    bra	    verified_ok		; yes! carry on reading
+    movwf   i2c_bad_bits	; 1's here are bits in error.
+    bsf	    i2c_control,5	; no! flag up verification error.
+postpone_ACK:
+    bsf	    i2c_control,3	; acknowledge cycle owed.
+    bra	    do_callback
 
 ; Start condition is not required; must check for the 'NOOP' case!
 no_start:
@@ -336,7 +344,7 @@ I2c_Probe_next:
     goto    I2c_Probe_next
 
 I2c_Test:
-    goto    I2c_Probe
+    goto    I2c_Test_dummy_verify ; I2c_Probe
 I2c_Test_synch_echo:
 ; input character from UART, write to I/O expander, read back, output ASCII value
 ; to UART. character should be unchanges except when I/O expander pins
@@ -369,11 +377,14 @@ I2c_Test_dummy_verify:
 next_char:
     call    UART_Get
     banksel SSP1CON2		; select SFR bank
+    movwf    i2c_buf
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave		; this is an 8-bit address!
 now_verify:
     banksel SSP1CON2		; select SFR bank
     call    I2c_Use_Internal_Buffer
+    movlw   1
+    movwf   i2c_count
     call    I2c_Start
     btfsc   i2c_control,6	; is our slave at home and answering the door?
     bra	    error_NAK
@@ -388,6 +399,7 @@ error_NAK:
     bra	    done_one_char
 
 done_verify:
+    bcf	    i2c_control,4	; clear verify bit.
     movlw   "?"
     btfss   i2c_control,5	; verify error?
     movlw   "="
@@ -395,6 +407,7 @@ done_one_char:
     bcf	    i2c_control,6	; clear any NAK error
     bcf	    i2c_control,5	; clear any verify error
     call    UART_Put
+    banksel SSP1CON2		; select SFR bank
     movf    i2c_buf,w
     call    UART_Print
     btfss   STATUS,Z
