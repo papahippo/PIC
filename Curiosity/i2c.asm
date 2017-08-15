@@ -203,9 +203,10 @@ give_start_cond:
     bcf	    SSP1CON2,ACKDT	; set ACK to normal state
     bsf     SSP1CON2,SEN	; initiate I2C bus start condition
 common_start:			; (common to regular and repeated start.)
+    bcf	    i2c_control,1	; start no longer required
+    bcf	    i2c_control,7	; clear the all-done bit.
     call    OnNext_I2c_IRQ
 ; The first interrupt after we cause the start condition gets to here:
-    bcf	    i2c_control,1	; start no longer required
     movf    i2c_slave,w		; bit 0 = R/W has already been manipulated
     movwf   SSP1BUF		; write I2C address of our slave to i2c_bus.
     call    OnNext_I2c_IRQ	; proceed when slave address has been written
@@ -365,6 +366,15 @@ I2c_Test_dummy_verify:
     call    UART_Get
     call    dummy_write_verify
     call    I2c_wait
+    movf    i2c_buf,w
+    call    UART_Print
+    movlw   "="			; Preset to ouput '=' for all ok case.
+    banksel SSP1CON2		; select SFR bank
+    btfsc   i2c_control,6	; Was our slave at home and answering the door?
+    movlw   "_"			; No! (NACK) 
+    btfsc   i2c_control,5	; Verify error?
+    movlw   "?"
+    call    UART_Put
     bra	    I2c_Test_dummy_verify
 
 dummy_write_verify:
@@ -372,40 +382,24 @@ dummy_write_verify:
     movwf    i2c_buf
     clrf    i2c_control
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
-    movwf   i2c_slave		; this is an 8-bit address!
+    movwf   i2c_slave		; Note that this is an 8-bit address!
 now_verify:
     banksel SSP1CON2		; select SFR bank
     call    I2c_Use_Internal_Buffer
     movlw   1
     movwf   i2c_count
     call    I2c_Start
-    btfsc   i2c_control,6	; is our slave at home and answering the door?
-    bra	    error_NAK
-    btfsc   i2c_control,4	; were we already doing the verify?
-    bra	    done_verify
+    bsf	    i2c_control,2	; i2c stop needed before the next i2c start!
+    call    I2c_Drive		; don't delay the stop
+    btfss   i2c_control,6	; Is our slave at home and answering the door?
+    btfsc   i2c_control,4	; Yes! are we already doing the verify
+; Either way, Just return (we're in interrupt context remember!)
+    return			; Main-line code will also inspect i2c_control
+
+; We just did teh write action and the ACKs were ok.
     bsf	    i2c_control,4	; must do verify now.
     bsf	    i2c_slave,0		; switch to read address
     bra	    now_verify
-
-error_NAK:
-    movlw   "_"
-    bra	    done_one_char
-
-done_verify:
-    bcf	    i2c_control,4	; clear verify bit.
-    movlw   "?"
-    btfss   i2c_control,5	; verify error?
-    movlw   "="
-done_one_char:
-    call    UART_Put
-    bcf	    i2c_control,6	; clear any NAK error
-    bcf	    i2c_control,5	; clear any verify error
-    bsf	    i2c_control,2	; i2c stop needed before the next i2c start!
-    call    I2c_Drive		; don't delay the stop
-    banksel SSP1CON2		; select SFR bank
-    movf    i2c_buf,w
-    call    UART_Print
-    return
 
     END
 
