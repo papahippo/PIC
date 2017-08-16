@@ -14,8 +14,11 @@ i2c_bufPtrH	    RES	1
 i2c_IRQ_TOSL	    RES 1
 i2c_IRQ_TOSH	    RES 1
 i2c_bad_bits	    RES 1
-i2c_reserved	    RES	6
-i2c_buf		    RES	24
+i2c_buf		    RES	6
+; remaining three definition related only to 'scattered_read' example
+sr_head		    RES .12
+sr_segment_count    RES 1	; dangerously in-between for testing purposes!
+sr_tail		    RES 4
 
 I2c CODE			; let linker place this
 
@@ -23,6 +26,7 @@ I2c CODE			; let linker place this
     global  I2c_Test, I2c_Probe
     
     extern UART_Get, UART_Put, UART_Print
+
  
 I2c_Init_400KHz:
     movlw   ClockValue400KHz	; read selected bit rate 
@@ -66,6 +70,7 @@ I2c_Init:
 
 I2c_Use_Internal_Buffer:
     banksel SSP1CON2		; select SFR bank
+    movwf   i2c_buf		; byte to be written if writing
     movlw   high i2c_buf
     movwf   FSR1H
     movlw   low i2c_buf
@@ -261,8 +266,8 @@ postpone_ACK:
 no_start:
     btfss   i2c_control,0	; more I/O
     bra	    do_final_callback
-
-    btfsc   i2c_slave,3		; still owing an acknowledge cycle?
+    bcf	    i2c_control,0	; don't presume more continues after this one!
+    btfsc   i2c_control,3		; still owing an acknowledge cycle?
 ; we didn't (yet) acknowledge the last byte of the previous buffer because we
 ; didn't know whether it was the last. we now know that it is wasn't.
     bra	    sendACK
@@ -301,7 +306,6 @@ I2c_wait:
 
 I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
-    movwf   i2c_buf		; byte to be written if writing
     call    I2c_Use_Internal_Buffer
     movlw   1
     movwf   i2c_count
@@ -337,7 +341,7 @@ I2c_Probe_next:
     goto    I2c_Probe_next
 
 I2c_Test:
-    goto    I2c_Test_dummy_verify ; I2c_Probe
+    goto    I2c_test_scattered_read ; I2c_Test_dummy_verify ; I2c_Probe
 I2c_Test_synch_echo:
 ; input character from UART, write to I/O expander, read back, output ASCII value
 ; to UART. character should be unchanges except when I/O expander pins
@@ -384,7 +388,6 @@ dummy_write_verify:
     movlw   0x70		; prepare to access i2c device PCF8574A 0111 000 
     movwf   i2c_slave		; Note that this is an 8-bit address!
 now_verify:
-    banksel SSP1CON2		; select SFR bank
     call    I2c_Use_Internal_Buffer
     movlw   1
     movwf   i2c_count
@@ -401,6 +404,63 @@ now_verify:
     bsf	    i2c_slave,0		; switch to read address
     bra	    now_verify
 
+I2c_test_scattered_read:
+    call    UART_Get
+    call    i2c_start_scattered_read
+    bra	    I2c_test_scattered_read
+i2c_start_scattered_read:
+; pretend we're reading a long i2c 'frame' cosisting of a 12-byte 'head',
+; 7 x 24-byte 'segments' and a 4-byte 'tail'.
+; The segments are read into the same offset in banks 5-11 to facilitate
+; indexing data.
+    call    I2c_Use_Internal_Buffer  ; also selects SFR bank and i2c_buf<-W
+    movlw   0x70		; prepare to write to i2c device PCF8574A
+    movwf   i2c_slave		; Note that this is an 8-bit address!
+    movlw   1
+    movwf   i2c_count
+    call    I2c_Clean_Start
+    movlw   high sr_head
+    movwf   FSR1H
+    movlw   low  sr_head
+    movwf   FSR1L
+    movlw   0x71		; prepare to read from i2c device PCF8574A
+    movwf   i2c_slave		; Note that this is an 8-bit address!
+    movlw   .12
+    movwf   i2c_count
+    bsf	    i2c_control,2	; require stop before start.
+    call    I2c_Start
+; 'return' here in IRQ context when header has been read.
+    movlw   2
+    movwf   FSR1H
+    movlw   0xd0
+    movwf   FSR1L
+read_segment:
+    movlw   .24
+    movwf   i2c_count
+    bsf	    i2c_control,0	; request more I/O without start or stop
+    call    I2c_Drive
+; 'return' here in IRQ context when a segment has been read has been read.
+    movlw   0x68		; step on to next page
+    addwf   FSR1L,f
+    btfsc   STATUS,C
+    incf    FSR1H
+    movlw   6
+    subwf   FSR1H,w		; no carry => we've stepped on to page 12.
+    btfss   STATUS,C
+    bra	    read_segment	; go read next segment
+; all 7	segments done; now read the 4-byte tail.
+    movlw   high sr_tail
+    movwf   FSR1H
+    movlw   low  sr_tail
+    movwf   FSR1L
+
+    movlw   4
+    movwf   i2c_count
+    bsf	    i2c_control,0	; request more I/O without start or stop
+    call    I2c_Drive
+; 'return' here after writing tail.
+    bsf	    i2c_control,2	; request stop condition
+    call    I2c_Drive		; we're all done, no callback required.
+    return
     END
 
-I
