@@ -306,13 +306,22 @@ I2c_wait:
 
 I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
-    call    I2c_Use_Internal_Buffer
     movlw   1
+I2c_Sync_Xfer_w_bytes:
     movwf   i2c_count
+    call    I2c_Use_Internal_Buffer
     call    I2c_Sync_Xfer
     movf    i2c_buf,w		; byte just read if reading
     return
 
+I2c_Temp_test:
+    call    UART_Get
+    banksel SSP1CON2		; select SFR bank    
+    movlw   0x91
+    movwf   i2c_slave
+    movlw   2
+    call    I2c_Sync_Xfer_w_bytes
+    bra	    I2c_Temp_test
 ; ==============================================================================
 ; Utility function to identify which i2c slave addresses are occupied.
 breather:
@@ -323,25 +332,24 @@ I2c_Probe:
     bsf     i2c_slave,0		; start by reading from slave with 7-bit addr 0.
     clrf    i2c_control
 I2c_Probe_next:
-    movlw   1
-    movwf   i2c_count
     movlw   2
     addwf   i2c_slave,f		; step on to next slave
     btfsc   STATUS,C		; avoid 0  (=general call address)
     bra	    breather ; I2c_Probe_next
-    bsf     i2c_control,1	; = request start
-    call    I2c_Use_Internal_Buffer
-    call    I2c_Drive
+    call    I2c_Sync_Xfer_w_bytes
     lsrf    i2c_slave,w		; recover 7-bit address. n.b. only changes W reg!
     btfss   i2c_control,6	; ACK given?
     call    UART_Print		; yes! print out 7-bit i2c slave address.
     banksel SSP1CON2		; select SFR bank
-    bcf	    i2c_control,6
-    bsf     i2c_control,2	; = request stop (before start!)
     goto    I2c_Probe_next
 
 I2c_Test:
-    goto    I2c_test_scattered_read ; I2c_Test_dummy_verify ; I2c_Probe
+;   goto    I2c_test_scattered_read
+;   goto    I2c_Test_dummy_verify ; I2c_Probe
+   goto    I2c_Probe
+;    goto    I2c_Temp_test
+
+
 I2c_Test_synch_echo:
 ; input character from UART, write to I/O expander, read back, output ASCII value
 ; to UART. character should be unchanges except when I/O expander pins
