@@ -109,6 +109,7 @@ I2c_IRQ:
 ; we disable SSP (hence I2c) interrupts during the handler; this is necessary to
 ; make our dispaching code safe but of course means a little extra IRQ latency.
     banksel PIE1
+
     bcf	    PIE1,SSP1IF		; interrupt from occurring before our context is set
     banksel SSP1CON2
     movf    i2c_bufPtrH,w
@@ -218,6 +219,10 @@ common_start:			; (common to regular and repeated start.)
 ;The first interrupt after we write the slave address gets to here:
     btfsc   SSP1CON2,ACKSTAT	; did our presumed slave acknowledge?
     bra	    slave_NACKed	; no? waste no more time. get off i2c bus asap.
+; following addition to support zero-length transfer under review!
+    ;;movf    i2c_count,f		
+    ;;btfsc   STATUS,Z		; check for zero length transfer
+    ;;bra	    do_callback
     btfsc   i2c_slave,0		; what must we do (first)? read or write?
     bra	    straight_read	; immediate read (e.g. no sub-address to write).
     bra	    write_next
@@ -306,8 +311,8 @@ I2c_wait:
 
 I2c_Sync_Xfer_byte:
     banksel SSP1CON2		; select SFR bank
+    movwf   i2c_buf		; byte to write if writing
     movlw   1
-I2c_Sync_Xfer_w_bytes:
     movwf   i2c_count
     call    I2c_Use_Internal_Buffer
     call    I2c_Sync_Xfer
@@ -320,7 +325,9 @@ I2c_Temp_test:
     movlw   0x91
     movwf   i2c_slave
     movlw   2
-    call    I2c_Sync_Xfer_w_bytes
+    movwf   i2c_count
+    call    I2c_Use_Internal_Buffer
+    call    I2c_Sync_Xfer
     bra	    I2c_Temp_test
 ; ==============================================================================
 ; Utility function to identify which i2c slave addresses are occupied.
@@ -336,7 +343,10 @@ I2c_Probe_next:
     addwf   i2c_slave,f		; step on to next slave
     btfsc   STATUS,C		; avoid 0  (=general call address)
     bra	    breather ; I2c_Probe_next
-    call    I2c_Sync_Xfer_w_bytes
+    movlw   2
+    movwf   i2c_count
+    call    I2c_Use_Internal_Buffer
+    call    I2c_Sync_Xfer
     lsrf    i2c_slave,w		; recover 7-bit address. n.b. only changes W reg!
     btfss   i2c_control,6	; ACK given?
     call    UART_Print		; yes! print out 7-bit i2c slave address.
