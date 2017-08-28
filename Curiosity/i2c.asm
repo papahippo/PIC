@@ -14,7 +14,7 @@ i2c_bufPtrH	    RES	1
 i2c_IRQ_TOSL	    RES 1
 i2c_IRQ_TOSH	    RES 1
 i2c_bad_bits	    RES 1
-i2c_buf		    RES	6
+i2c_buf		    RES	.22
 ; remaining three definition related only to 'scattered_read' example
 sr_head		    RES .12
 sr_segment_count    RES 1	; dangerously in-between for testing purposes!
@@ -28,6 +28,8 @@ I2c CODE			; let linker place this
     extern UART_Get, UART_Put, UART_Print
 
  
+; ------------------------------------------------------------------------------
+; 'I2c_Init_400KHz' initialized the I2c bus for master operation at 400kHz.
 I2c_Init_400KHz:
     movlw   ClockValue400KHz	; read selected bit rate 
 I2c_Init:
@@ -65,18 +67,24 @@ I2c_Init:
     movwf   SSP1CON1		; Master mode, SSP enable
 ; The followng call is just a long-stop in-case an i2c interrupt happens
 ; before we expect it. In that case the following return is harmless.
-; problematic with bororwig PCLATH! ... call    OnNext_I2c_IRQ
+; problematic? unnecesary? ... call    OnNext_I2c_IRQ
     return
 
+; ------------------------------------------------------------------------------
+; A small buffer (22 bytes) is reserved within the SSP1 bank for small i2c
+; transfers. A conveninece function is provided to load up FSR1 to use this:
 I2c_Use_Internal_Buffer:
     banksel SSP1CON2		; select SFR bank
-    movwf   i2c_buf		; byte to be written if writing
     movlw   high i2c_buf
     movwf   FSR1H
     movlw   low i2c_buf
     movwf   FSR1L
     return
 
+; ------------------------------------------------------------------------------
+; A call to 'OnNext_I2c_IRQ' (just below) saves the return address and pops
+; it from the stack then returns to the caller's caller. The code at the saved
+; return address gets executed on the next I2c IRQ (hence the name!).
 OnNext_I2c_IRQ:
     movf    FSR1L,w
     movwf   i2c_bufPtrL
@@ -86,17 +94,20 @@ OnNext_I2c_IRQ:
     movf    TOSL,w
     banksel SSP1CON2
     movwf   i2c_IRQ_TOSL
-;;    movwf   PCLATH		; borrow this register!
     banksel TOSH
     movf    TOSH,w
-    decf    STKPTR,f
+    decf    STKPTR,f		; 'pop' the return address from the stack.
     banksel SSP1CON2
     movwf   i2c_IRQ_TOSH
-    banksel PIE1		; now our 'vector' is written it is safe to allow
+    banksel PIE1		; now our 'vector' is written, it is safe to allow
     bsf	    PIE1,SSP1IF		; the next interrupt to arrive.
     banksel SSP1BUF
     return
 
+; ------------------------------------------------------------------------------
+; 'I2c_IRQ' is called every time an interrupt is detected. The code here must
+; first establish whether there really is an I2C interrupt and if not, get out
+; of here quickly!
 I2c_IRQ:
     banksel PIE1
     btfss   PIE1,SSP1IE		; test if interrupt is enabled
@@ -104,12 +115,16 @@ I2c_IRQ:
     ;;; goto	test_buscoll   ; no, so test for Bus Collision Int
     banksel PIR1
     btfss   PIR1,SSP1IF		; test for SSP H/W flag
+; an unexpected return here can be symptomatic of a an i2c bus error, in which 
+; case bit 3 of PIR2 will be set. It seems the hardware can get into a state
+; where all attempts to use I2c lead to such a condition and the only fix known
+; to me is to power down and go away for an hour or two! 
+
     return			; no I2C IRQ so return to generic IRQ code
     bcf	    PIR1,SSP1IF		; clear SSP H/W flag
-; we disable SSP (hence I2c) interrupts during the handler; this is necessary to
+; We disable SSP (hence I2c) interrupts during the handler; this is necessary to
 ; make our dispaching code safe but of course means a little extra IRQ latency.
     banksel PIE1
-
     bcf	    PIE1,SSP1IF		; interrupt from occurring before our context is set
     banksel SSP1CON2
     movf    i2c_bufPtrH,w
@@ -120,6 +135,9 @@ I2c_IRQ:
     movwf   PCLATH		; set by the last call to 'OnNext_I2c_IRQ'.
     movf    i2c_IRQ_TOSL,w
     movwf   PCL			; branch to context-dependent handler
+; The above instructions route us to the instruction immeditaely following the
+; most recently executed "call    OnNext_I2c_IRQ". This will be somewhere within
+; the driver code below...
 
 ; ==============================================================================
 ; all I2C reads and writes go (directly or indirectly) via I2c_Drive.
@@ -136,7 +154,7 @@ I2c_IRQ:
 ;     without the need for any OS. This must be used wisely of course like all
 ;     good things!
 ; The following variables form an "I2c control block":
-; I2c_control:  this byte is a pattern of  bits which in general is a
+; i2c_control:  this byte is a pattern of  bits which in general is a
 ;		command to the driver telling it what to do next.
 ; ------------------------------------------------------------------------
 ; bit		meaning
@@ -149,6 +167,17 @@ I2c_IRQ:
 ;  2		stop condition to be given 
 ;  1		start condition to be given
 ;  0		(bit 1 set)=> repeated start; (bit 0 clear)=> more I/O
+;
+; i2c_slave	This must be expressed as an eight bit value: bits 7-1 =
+;		hardware 7-bit salve address, bit 0 = 1/0 for R/W respectively.
+; i2c_count	is a single byte indicating how many data bytes need to be
+;		read or written before calling the user's callback. A zero value
+;		is (currently under review) not allowed so 1<=i2c_count<=255.
+;		Longer frame transfers can be aceived by calling I2c_Drive again
+;		from the user's callback routine.
+; The address of the data buffer is passed in registers FSR1H and FSR1L. This is
+; saved, used, and updated by the driver. The updated value is passed to the
+; callback routine in FRS1H adn FSR1L.
 
 I2c_Clean_Start:
     clrf    i2c_control
@@ -292,9 +321,11 @@ do_callback:
 ; conditions, with no real callback functionality.
 i2c_Simple_Transfer:
     call    I2c_Clean_Start	; follows through some interrupts later!
+; the code below is the first callback routine!
     bsf	    i2c_control,2	; request no more I/O no start, just stop!
     call    I2c_Drive		; follows through some interrupts later!
-    return
+; the code below is the first callback routine!
+    return			; no follow action in interrupt context.
 
 ; ============================================================================
 ; I2c_Sync_Xfer does a simple read or write transfer and waits for completion.
@@ -319,6 +350,23 @@ I2c_Sync_Xfer_byte:
     movf    i2c_buf,w		; byte just read if reading
     return
 
+; ==============================================================================
+; The rest of this source file contains example/test code.
+; So far, I've selected which test to run by the age-old method of
+; [un]commenting statements. I intend to add some primitive menu system
+; some day soon!
+I2c_Test:
+;   goto    I2c_test_scattered_read
+;   goto    I2c_Test_dummy_verify ; I2c_Probe
+    bra    I2c_Probe
+;    goto    I2c_Temp_test
+
+; ------------------------------------------------------------------------------
+; 'I2c_Temp_test' currently does very little. It just reads the two-byte
+; temperature value from the temperature register. It really ought to - at 
+; the very least - first write the pointer byte to address the temperature
+; register rather than relying on the power-on default! see LM75A specification.
+
 I2c_Temp_test:
     call    UART_Get
     banksel SSP1CON2		; select SFR bank    
@@ -331,9 +379,8 @@ I2c_Temp_test:
     bra	    I2c_Temp_test
 ; ==============================================================================
 ; Utility function to identify which i2c slave addresses are occupied.
-breather:
-    call    UART_Get
 I2c_Probe:
+    call    UART_Get
     banksel SSP1CON2		; select SFR bank    
     clrf    i2c_slave
     bsf     i2c_slave,0		; start by reading from slave with 7-bit addr 0.
@@ -342,7 +389,9 @@ I2c_Probe_next:
     movlw   2
     addwf   i2c_slave,f		; step on to next slave
     btfsc   STATUS,C		; avoid 0  (=general call address)
-    bra	    breather ; I2c_Probe_next
+    bra	    I2c_Probe
+; We always try to read two bytes; this is because certain devices (notably 'my'
+; LM75A!) cannot handle a single-byte read and can cause a bus lock-up.
     movlw   2
     movwf   i2c_count
     call    I2c_Use_Internal_Buffer
@@ -351,13 +400,7 @@ I2c_Probe_next:
     btfss   i2c_control,6	; ACK given?
     call    UART_Print		; yes! print out 7-bit i2c slave address.
     banksel SSP1CON2		; select SFR bank
-    goto    I2c_Probe_next
-
-I2c_Test:
-;   goto    I2c_test_scattered_read
-;   goto    I2c_Test_dummy_verify ; I2c_Probe
-   goto    I2c_Probe
-;    goto    I2c_Temp_test
+    bra    I2c_Probe_next
 
 
 I2c_Test_synch_echo:

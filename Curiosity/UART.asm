@@ -42,7 +42,7 @@ UART_Get:
     movf    RCREG,w
     return	
      
-UART_Print: ; output byte value to UART as two printable hex digits.
+UART_Print: ; output byte value to UART as 'x' followed by two printable hex digits.
     movwf   0x7f
     movlw   "x"
     call    UART_Put
